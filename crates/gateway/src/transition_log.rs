@@ -1,7 +1,6 @@
 //! Ledger-shaped stdout for `--print-transitions-only` (ANSI when stdout is a TTY).
 
-use common::facade::PublishedTransitionRecord;
-use common::published::{PublishedFsmEvent, PublishedFsmState};
+use common::facade::{PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord};
 
 pub fn spawn_transition_log_task(
     rx: tokio::sync::mpsc::Receiver<PublishedTransitionRecord>,
@@ -106,7 +105,7 @@ mod ansi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::published::{
+    use common::facade::{
         PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext,
         PublishedHeadlampState, PublishedHealthContext, PublishedPowertrainContext,
         PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext,

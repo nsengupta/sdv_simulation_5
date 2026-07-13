@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::digital_twin::DigitalTwinCarVocabulary;
 use crate::fsm::HeadlampState;
-use crate::published::{PublishedHeadlampContext, PublishedHeadlampState};
+use crate::observation_records::transition::{PublishedHeadlampContext, PublishedHeadlampState};
 use crate::test::{expect_actuation_command, inject_matching_ack, power_on_to_idle, ActorGuard};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_state::{HeadlampContext, HeadlampMessage};

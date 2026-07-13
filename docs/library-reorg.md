@@ -36,8 +36,8 @@ L0  vehicle_physics          constants, pure kinematics (no FSM, no I/O)
 L1  vehicle_state            assemblies: powertrain, health, visibility, headlamp
                               VehicleContext aggregate; zone alphabets (ADR-5)
 L2  fsm                      FsmState, FsmEvent, step(), transition_map — pure
-L3  digital_twin, published  DigitalTwinCar capsule; serde ledger projection
-L4  twin_runtime, sinks      VirtualCarActor, HeadlampActor, zone_turn, actuation
+L3  digital_twin, observation_records  DigitalTwinCar capsule; outward-facing observation records
+L4  twin_runtime                      VirtualCarActor, HeadlampActor, zone_turn, actuation
 L5  facade                   gateway-facing public API (VehicleController, …)
 L6  gateway, emulator,       wire adapters; never send FsmEvent directly
     front_headlamp_actuator
@@ -74,9 +74,8 @@ From [`crates/common/src/lib.rs`](../crates/common/src/lib.rs):
 | `domain_types`, `signals` | L1 | Ingress vocabulary helpers, VSS-inspired signals |
 | `fsm` | L2 | Operational FSM table, `step`, internal operational events |
 | `digital_twin` | L3 | `DigitalTwinCar`, mailbox vocabulary, state laws |
-| `published` | L3′ | Serializable ledger mirror (`PublishedTransitionRecord`) |
+| `observation_records` | L3 | Transition + diagnostic record types; sinks in `::sink` submodules |
 | `twin_runtime` | L4 | Brain + headlamp twinlet, `zone_turn`, `twin_turn`, detectors |
-| `diagnostic`, `transition_sink` | L4 | Sink traits (stdout / channels) |
 | `facade` | L5 | Re-exports for gateway and integration tests |
 
 **L6 binaries:**

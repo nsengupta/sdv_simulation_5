@@ -26,8 +26,13 @@ pub use crate::vehicle_state::WiperState;
 
 // --- Observation / optional runtime wiring ---
 
-pub use crate::diagnostic::spawn_stdout_diagnostic_observer;
-pub use crate::published::PublishedTransitionRecord;
+pub use crate::observation_records::diagnostic::sink::spawn_stdout_diagnostic_observer;
+pub use crate::observation_records::transition::{
+    PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext,
+    PublishedHeadlampState, PublishedHealthContext, PublishedPowertrainContext,
+    PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext,
+    PublishedWheelRpm,
+};
 
 // --- Headlamp ingress/egress log tokens (gateway CAN loop display) ---
 

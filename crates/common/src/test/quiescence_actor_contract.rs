@@ -5,7 +5,9 @@
 use std::time::{Duration, Instant};
 
 use crate::fsm::{DomainAction, FsmEvent, FsmState, HeadlampState, Operational};
-use crate::published::{PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedOperational};
+use crate::observation_records::transition::{
+    PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedOperational,
+};
 use crate::test::power_on_to_idle;
 use crate::test::ActorGuard;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;

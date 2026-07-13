@@ -2,7 +2,7 @@ use crate::digital_twin::{CarSnapshot, DigitalTwinCarVocabulary};
 use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
 use crate::twin_runtime::connectors::{PhysicalToDigitalProjector, Projector};
 use crate::fsm::FsmEvent;
-use crate::transition_sink::PublishedTransitionRecord;
+use crate::observation_records::transition::PublishedTransitionRecord;
 use crate::PhysicalCarVocabulary;
 use ractor::rpc::CallResult;
 use ractor::{ActorRef, MessagingErr, SpawnErr};
@@ -27,7 +27,7 @@ pub enum VehicleControllerError {
 pub struct VehicleControllerRuntimeOptions {
     pub log_timer_tick: bool,
     pub actuation_command_tx: Option<tokio::sync::mpsc::Sender<ActuationCommand>>,
-    pub diagnostic_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::diagnostic::DiagnosticMessage>>,
+    pub diagnostic_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::observation_records::diagnostic::DiagnosticRecord>>,
     pub transition_tx: Option<tokio::sync::mpsc::Sender<PublishedTransitionRecord>>,
     /// Contract tests: headlamp twinlet ignores tells (exercises tell-back timeout path).
     #[doc(hidden)]

@@ -53,7 +53,7 @@ pub async fn run(launch: GatewayLaunchConfig<'_>) -> Result<()> {
     let front_headlamp_policy = Arc::new(Mutex::new(FrontHeadlampPolicy::default()));
     let (actuation_cmd_tx, actuation_cmd_rx) = mpsc::channel(ACTUATION_COMMAND_CHANNEL_CAPACITY);
 
-    // Diagnostic channel: twin emits DiagnosticMessage, runtime observes (unless ledger-only).
+    // Diagnostic channel: twin emits DiagnosticRecord, runtime observes (unless ledger-only).
     let diagnostic_tx = if launch.print_transitions_only {
         None
     } else {

@@ -7,7 +7,6 @@
 //! - **L2** `fsm` — pure decision core (`step`, `transition_map`); imports L0/L1 only
 //! - **L3** `digital_twin`, `observation_records` — twin capsule and outward-facing observation records
 //! - **L4** `twin_runtime` — actor runtime (sinks live under `observation_records::{transition,diagnostic}::sink`)
-//! - **L3 shims** `published`, `transition_sink`, `diagnostic` — compatibility re-exports (migrate to `observation_records`)
 //! - **L5** `facade` — public surface for gateway / L6 binaries
 //!
 //! Acyclic among core layers: `fsm` does not import `digital_twin` or `twin_runtime`;
@@ -20,9 +19,6 @@ pub mod front_headlamp_log;
 pub mod fsm;
 pub mod digital_twin;
 pub mod observation_records;
-pub mod published;
-pub mod transition_sink;
-pub mod diagnostic;
 pub mod twin_runtime;
 pub mod facade;
 
@@ -70,5 +66,3 @@ pub use observation_records::diagnostic::sink::{
 pub use observation_records::transition::sink::{
     TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
 };
-/// Deprecated alias — prefer [`DiagnosticRecord`].
-pub type DiagnosticMessage = DiagnosticRecord;

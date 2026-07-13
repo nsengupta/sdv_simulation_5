@@ -108,7 +108,7 @@ async fn spawn_silent_wiper(
     identity: &str,
 ) -> (
     VehicleController,
-    tokio::sync::mpsc::Receiver<crate::published::PublishedTransitionRecord>,
+    tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
     ActorGuard<DigitalTwinCarVocabulary>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
@@ -129,7 +129,7 @@ async fn spawn_silent_both(
     identity: &str,
 ) -> (
     VehicleController,
-    tokio::sync::mpsc::Receiver<crate::published::PublishedTransitionRecord>,
+    tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
     ActorGuard<DigitalTwinCarVocabulary>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
@@ -148,10 +148,10 @@ async fn spawn_silent_both(
 }
 
 async fn drain_n(
-    rx: &mut tokio::sync::mpsc::Receiver<crate::published::PublishedTransitionRecord>,
+    rx: &mut tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
     n: usize,
     timeout: Duration,
-) -> Vec<crate::published::PublishedTransitionRecord> {
+) -> Vec<crate::observation_records::transition::PublishedTransitionRecord> {
     let mut rows = Vec::with_capacity(n);
     for i in 0..n {
         match tokio::time::timeout(timeout, rx.recv()).await {
@@ -164,7 +164,7 @@ async fn drain_n(
 }
 
 async fn assert_no_row(
-    rx: &mut tokio::sync::mpsc::Receiver<crate::published::PublishedTransitionRecord>,
+    rx: &mut tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
     window: Duration,
 ) {
     match tokio::time::timeout(window, rx.recv()).await {
@@ -178,7 +178,7 @@ async fn assert_no_row(
 /// Drains the 3 resulting ledger rows: PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
 async fn boot_silent_both(
     controller: &VehicleController,
-    rx: &mut tokio::sync::mpsc::Receiver<crate::published::PublishedTransitionRecord>,
+    rx: &mut tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
 ) {
     controller.send_power_on().await.expect("power on");
     tokio::task::yield_now().await;

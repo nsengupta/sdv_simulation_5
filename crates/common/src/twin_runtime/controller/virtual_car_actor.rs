@@ -28,9 +28,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::diagnostic::{
-    DiagnosticMessage, DiagnosticSink, TokioMpscDiagnosticSink, diag_front_headlamp_confirmed,
-    diag_state_transition, diag_timer_tick, diag_actuation_failure, diag_warning,
+use crate::observation_records::diagnostic::DiagnosticRecord;
+use crate::observation_records::diagnostic::sink::{
+    DiagnosticSink, TokioMpscDiagnosticSink, diag_actuation_failure,
+    diag_front_headlamp_confirmed, diag_state_transition, diag_timer_tick, diag_warning,
     diag_transition_sink_full, diag_transition_sink_closed,
 };
 use crate::digital_twin::{CarSnapshot, DigitalTwinCar, DigitalTwinCarVocabulary, ZoneMessage, ZoneReply};
@@ -58,8 +59,10 @@ use crate::twin_runtime::turn_barrier::{
     BarrierEntry, PassthroughBarrier, TellBackTimer, TimeoutOutcome, TurnBarrier,
 };
 use crate::vehicle_state::{HeadlampMessage, WiperMessage, VehicleContext};
-use crate::published::{PublishedTransitionRecord, SessionEpoch};
-use crate::transition_sink::{TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError};
+use crate::observation_records::transition::{PublishedTransitionRecord, SessionEpoch};
+use crate::observation_records::transition::sink::{
+    TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
+};
 
 /// The Digital Twin Actor
 pub struct VirtualCarActor;
@@ -159,7 +162,7 @@ impl Actor for VirtualCarActor {
             .map(|tx| Arc::new(TokioMpscTransitionRecordSink::new(tx)) as Arc<dyn TransitionRecordSink>);
 
         if let Some(sink) = &diagnostic_sink {
-            let _ = sink.try_emit(DiagnosticMessage::info(
+            let _ = sink.try_emit(DiagnosticRecord::info(
                 "VirtualCarActor",
                 format!("Physical Car name: {identity}, initializing its Digital Twin ..."),
             ));

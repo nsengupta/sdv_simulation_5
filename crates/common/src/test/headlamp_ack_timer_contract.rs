@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use crate::fsm::{FsmEvent, FsmState, HeadlampState};
-use crate::published::{
+use crate::observation_records::transition::{
     PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedOperational,
 };
 use crate::test::{power_on_to_idle, submit_daylight_ambient, wait_fsm_state, wait_headlamp_state, ActorGuard};

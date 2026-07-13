@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::diagnostic::DiagnosticMessage;
+use crate::observation_records::diagnostic::DiagnosticRecord;
 use crate::fsm::FsmState;
 use crate::test::{wait_fsm_state, ActorGuard};
 use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_WAIT};
@@ -21,9 +21,9 @@ fn full_exhaustion_budget() -> Duration {
 
 /// Drain the diagnostic channel, returning all messages received within `window`.
 async fn drain_diagnostics(
-    rx: &mut mpsc::UnboundedReceiver<DiagnosticMessage>,
+    rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
     window: Duration,
-) -> Vec<DiagnosticMessage> {
+) -> Vec<DiagnosticRecord> {
     let mut msgs = vec![];
     let deadline = tokio::time::Instant::now() + window;
     loop {
@@ -37,7 +37,7 @@ async fn drain_diagnostics(
 
 #[tokio::test]
 async fn given_silent_wiper_when_startup_tell_back_exhausted_then_warning_on_diagnostic_stream() {
-    let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<DiagnosticMessage>();
+    let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
     let opts = VehicleControllerRuntimeOptions {
         diagnostic_tx: Some(diag_tx),
         test_silent_wiper: true,
@@ -62,7 +62,7 @@ async fn given_silent_wiper_when_startup_tell_back_exhausted_then_warning_on_dia
     let messages = drain_diagnostics(&mut diag_rx, Duration::from_millis(50)).await;
 
     let has_wiper_warning = messages.iter().any(|m| {
-        m.message.to_lowercase().contains("wiper") && m.level == crate::diagnostic::DiagnosticLevel::Warning
+        m.message.to_lowercase().contains("wiper") && m.level == crate::observation_records::diagnostic::DiagnosticLevel::Warning
     });
     assert!(
         has_wiper_warning,

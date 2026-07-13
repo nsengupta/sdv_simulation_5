@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 
 use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneReply};
 use crate::fsm::{FsmEvent, FsmState, HeadlampState, AssemblyId};
-use crate::published::{PublishedDomainAction, PublishedTransitionRecord};
+use crate::observation_records::transition::{PublishedDomainAction, PublishedTransitionRecord};
 use crate::test::ActorGuard;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_physics::LUX_ON_THRESHOLD;
