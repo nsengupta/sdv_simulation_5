@@ -1,1 +1,0 @@
-- Never delete/erase any file without permission from the user

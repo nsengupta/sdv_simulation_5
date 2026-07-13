@@ -5,8 +5,9 @@
 //! - **L0** `vehicle_physics` — constants and pure kinematics
 //! - **L1** `vehicle_state`, `domain_types`, `signals`, `front_headlamp_log`
 //! - **L2** `fsm` — pure decision core (`step`, `transition_map`); imports L0/L1 only
-//! - **L3** `digital_twin`, `published` — twin capsule and serde projection
-//! - **L4** `transition_sink`, `diagnostic`, `twin_runtime` — actor runtime and I/O sinks
+//! - **L3** `digital_twin`, `observation_records` — twin capsule and outward-facing observation records
+//! - **L4** `twin_runtime` — actor runtime (sinks live under `observation_records::{transition,diagnostic}::sink`)
+//! - **L3 shims** `published`, `transition_sink`, `diagnostic` — compatibility re-exports (migrate to `observation_records`)
 //! - **L5** `facade` — public surface for gateway / L6 binaries
 //!
 //! Acyclic among core layers: `fsm` does not import `digital_twin` or `twin_runtime`;
@@ -18,6 +19,7 @@ pub mod signals;
 pub mod front_headlamp_log;
 pub mod fsm;
 pub mod digital_twin;
+pub mod observation_records;
 pub mod published;
 pub mod transition_sink;
 pub mod diagnostic;
@@ -52,19 +54,21 @@ pub use vehicle_physics::{
     RPM_STRESS_DURATION_THRESHOLD_SECS, SPEED_EXTREME_OPERATION_THRESHOLD_KPH,
     SPEED_THRESHOLD_WARNING_MESSAGE,
 };
-pub use published::{
-    PublishedDomainAction, PublishedFrontHeadlampIncompleteCause,
-    PublishedFrontHeadlampSwitchDirection, PublishedFsmEvent, PublishedFsmState,
-    PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
-    PublishedPowertrainContext, PublishedTransitionRecord, PublishedVehicleContext,
-    PublishedVisibilityContext, PublishedWheelRpm, SessionEpoch,
+pub use observation_records::{
+    DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
+    PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
+    PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
+    PublishedHealthContext, PublishedPowertrainContext, PublishedTransitionRecord,
+    PublishedVehicleContext, PublishedVisibilityContext, PublishedWheelRpm, SessionEpoch,
 };
-pub use transition_sink::{
-    TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
-};
-pub use diagnostic::{
-    DiagnosticLevel, DiagnosticMessage, DiagnosticSink, DiagnosticSinkError,
-    TokioMpscDiagnosticSink, diag_state_transition, diag_timer_tick,
-    diag_actuation_failure, diag_warning, diag_transition_sink_full, diag_transition_sink_closed,
+pub use observation_records::diagnostic::sink::{
+    DiagnosticSink, DiagnosticSinkError, TokioMpscDiagnosticSink, diag_actuation_failure,
+    diag_front_headlamp_confirmed, diag_state_transition, diag_timer_tick,
+    diag_transition_sink_closed, diag_transition_sink_full, diag_warning,
     spawn_stdout_diagnostic_observer,
 };
+pub use observation_records::transition::sink::{
+    TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
+};
+/// Deprecated alias — prefer [`DiagnosticRecord`].
+pub type DiagnosticMessage = DiagnosticRecord;
