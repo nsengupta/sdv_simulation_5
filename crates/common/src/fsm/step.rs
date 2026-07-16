@@ -10,9 +10,9 @@
 
 use std::time::Instant;
 
-use crate::vehicle_state::VehicleContext;
 use super::machineries::{DomainAction, FsmAction, FsmEvent, FsmState};
-use super::transition_map::{output, transition, TransitionNote};
+use super::transition_map::{TransitionNote, output, transition};
+use crate::vehicle_state::VehicleContext;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawTransitionRecord {
@@ -56,7 +56,7 @@ pub fn step(
         match note {
             TransitionNote::RejectedPowerOff => {
                 actions.push(DomainAction::LogWarning(format!(
-                    "[REJECTED]: PowerOff is invalid while in state {:?}",
+                    "[REJECTED]: vehicle must be Idle before PowerOff; current state is {:?}",
                     current_state
                 )));
             }
@@ -69,10 +69,12 @@ pub fn step(
     // not a domain intent, and its effect is already captured by the resulting state change.
     let recorded_actions: Vec<DomainAction> = actions
         .iter()
-        .filter(|action| !matches!(
-            action,
-            DomainAction::StartAssemblies(_) | DomainAction::StopAssemblies(_)
-        ))
+        .filter(|action| {
+            !matches!(
+                action,
+                DomainAction::StartAssemblies(_) | DomainAction::StopAssemblies(_)
+            )
+        })
         .cloned()
         .collect();
 

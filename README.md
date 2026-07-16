@@ -488,45 +488,36 @@ The dashboard **trusts the twin completely** for display. Vehicle operation and 
 (PowerOn/PowerOff) are driven by **emulators and actuators on CAN** — not by dashboard keys
 (**lifecycle owner A**, decided).
 
-### Twin while `Off` — silent ignore (target)
+### Twin while `Off` — silent ignore
 
 The twin is installed and ready to mirror the real car, but until **PowerOn** it **silently
 ignores** all driver-side ingress (RPM, lux, rain, …): no FSM hops, no ledger rows, no context
-updates. Only **PowerOn** is processed. *Not fully implemented yet* — pre-Start CAN can still
-advance `Seq` today; see refactoring doc.
+updates. Only **PowerOn** is processed. The Phase 1 `vcan0` smoke verifies that pre-Start CAN
+does not advance `Seq`.
 
-### Lifecycle keys (transitional)
+### Observer-only Dashboard
 
-Dashboard **`s`** / **`o`** send PowerOn/PowerOff programmatically — **temporary** until
-emulator **echo** mode sends lifecycle on CAN (`0x100`). Prefer:
-
-```text
-actuators → tui_dashboard → emulator (script includes PowerOn … PowerOff)
-```
-
-| Key | Status |
-|-----|--------|
-| **`s`** / **`o`** | Transitional — remove when echo + CAN lifecycle land |
-| **`q`** / Esc | Quit UI (see limitation below) |
+Dashboard has no lifecycle controls. It waits for the emulator's PowerOn on CAN and renders only
+the diagnostic and ledger records authored by the twin. **`q`** / Esc still quits the UI (see the
+limitation below).
 
 There is **no accessory-power mode**: boot diagnostic may show session time while FSM is `Off`;
 the car is not powered until **PowerOn** arrives on the ingress path.
 
 ### CAN before Start
 
-See [Twin while `Off`](#twin-while-off--silent-ignore-target). Do not interpret pre-Start
-telemetry as “car partially on”. Emulator echo scripts will send **PowerOn** as the first
-lifecycle step on the bus.
+See [Twin while `Off`](#twin-while-off--silent-ignore). Do not interpret pre-PowerOn telemetry as
+“car partially on”. The finite emulator sends **PowerOn** as its first frame.
 
 ### Gateway headless vs dashboard app
 
 | Binary | Start | Use |
 |--------|-------|-----|
-| **`tui_dashboard`** | Emulator **PowerOn on CAN** (target); **`s` transitional** | Interactive observation |
+| **`tui_dashboard`** | Emulator **PowerOn on CAN** | Interactive observation |
 | **`gateway`** | Auto `PowerOn` on spawn (default) | Headless / CI |
 
 ```bash
-# Dashboard app (install + CAN ingress; manual Start)
+# Dashboard app (install + CAN ingress; waits for lifecycle over CAN)
 cargo run -p tui_dashboard
 ```
 
@@ -538,9 +529,9 @@ Today, **`q` exits the process**, which drops the runtime `JoinHandle` and **sto
 
 ## How to Run
 
-**Five processes** (or four if you use the dashboard app instead of headless gateway) share
-Linux **SocketCAN** (`vcan0` by default). Start the actuators before or alongside the twin
-so CMD frames have a listener on the bus.
+The finite Phase 2 run uses four processes sharing Linux **SocketCAN** (`vcan0` by default).
+Start them in this order so actuator listeners and the observer-only Dashboard are ready before
+the emulator sends PowerOn and immediate telemetry.
 
 ```bash
 # One-time setup (per boot)
@@ -548,28 +539,29 @@ sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan 2>/dev/null || true
 sudo ip link set up vcan0
 
-# Terminal 1 — CAN emulator (RPM + ambient lux + rain sensor; random "generate" mode)
-cargo run -p emulator
-
-# Terminal 2 — Headlamp actuator (CMD in → ACK/NACK out)
+# Terminal 1 — Headlamp actuator (CMD in → ACK/NACK out)
 cargo run -p front_headlamp_actuator
 
-# Terminal 3 — Wiper actuator (CMD in → motor log out; no ACK/NACK)
+# Terminal 2 — Wiper actuator (CMD in → motor log out; no ACK/NACK)
 cargo run -p wiper_actuator
 
-# Terminal 4a — Dashboard app (manual Start: press 's' in the TUI)
+# Terminal 3 — observer-only Dashboard and in-process twin
 cargo run -p tui_dashboard
 
-# Terminal 4b — OR headless gateway (auto PowerOn on spawn)
-cargo run -p gateway
-
-# Optional: coloured transition ledger only (no diagnostics)
-cargo run -p gateway -- --print-transitions-only
+# Terminal 4 — finite emulator: PowerOn, 30 telemetry cycles, RPM zero, PowerOff
+EMULATOR_TUNNEL_PROB=0.01 \
+EMULATOR_RAIN_PROB=0.008 \
+cargo run -p emulator -- --readings 30
 ```
 
-**Dashboard workflow (target):** start actuators → **`tui_dashboard`** → emulator echo script
-(includes PowerOn). Until echo lands, **`s`** remains a transitional workaround — see
-[`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md) and [`docs/PHASES.md`](docs/PHASES.md).
+`--readings N` is required and counts logical telemetry cycles. The emulator writes exactly
+`3N + 3` frames: PowerOn first; `N` RPM/lux/rain triples; RPM zero penultimate; PowerOff final.
+It then exits. The twin's existing startup barrier orders immediate post-PowerOn readings after
+assembly readiness.
+
+PowerOff transmission does **not** guarantee acceptance. If another FSM guard prevents the twin
+from reaching `Idle`, Dashboard displays the twin-authored rejection and actual final state.
+CSV scenario and echo work are explicitly deferred.
 
 ### Tunable probabilities (optional)
 
@@ -583,7 +575,7 @@ cargo run -p gateway -- --print-transitions-only
 Example:
 
 ```bash
-EMULATOR_RAIN_PROB=0.05 cargo run -p emulator
+EMULATOR_RAIN_PROB=0.05 cargo run -p emulator -- --readings 30
 WIPER_ACTUATOR_DROP_RESPONSE_PROB=0.3 cargo run -p wiper_actuator
 ```
 
@@ -644,7 +636,7 @@ Detail: [`docs/design-documents.md`](docs/design-documents.md)
   the reader/report tool is designed but unbuilt.
 - Not a replacement for the pyramid/ADR docs — see `docs/library-reorg.md`.
 
-Known gaps carried forward: CAN emulation for `PowerOn`/`PowerOff` on CAN `0x100`, non-blocking
-actuation (child actor), HeadlampActor isolation tests, `ActuationIncomplete(Off)` coverage,
+Known gaps carried forward: CSV scenario/echo support (deferred), non-blocking actuation
+(child actor), HeadlampActor isolation tests, `ActuationIncomplete(Off)` coverage,
 explicit shutdown/disband on dashboard quit (**Phase 9** / TL-6, deferred until CAN E2E gate).
 Twin lifecycle status: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) (TL-0–TL-5 done; TL-6+ pending).

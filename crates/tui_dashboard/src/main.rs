@@ -4,19 +4,19 @@
 //! [`TwinRuntimeBuilder`], then runs the dashboard as a passive display of twin emissions.
 //! Session elapsed time is derived from twin records ([`SessionClock`]), not a local clock.
 //!
-//! Lifecycle convenience keys: **`s`** start, **`o`** stop, **`q`** / Esc quit.
+//! Only **`q`** / Esc quit the dashboard. Lifecycle (PowerOn/PowerOff) is CAN / emulator driven.
 //! Vehicle operation (RPM, park, lighting, …) is CAN / emulator driven — not the dashboard.
 
 use std::time::Duration;
 
 use anyhow::Result;
-use common::facade::VehicleController;
 use common::observation_records::diagnostic::elapsed_since_session;
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
+use crossterm::event::{self, Event, KeyCode};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use gateway::gateway_runtime::TwinRuntimeBuilder;
-use gateway::twin_lifecycle::TwinLifecycleCoordinator;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -26,23 +26,20 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use common::DiagnosticRecord;
-use common::facade::{PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord};
 use common::PublishedDomainAction;
+use common::facade::{PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord};
 
 const VIRTUAL_CAR_IDENTITY: &str = "My-Opel-Corsa-1.4-GSi";
 const BOOT_DIAGNOSTIC_WAIT: Duration = Duration::from_millis(500);
-const KEYS_FOOTER: &str = "Keys: 's' start · 'o' stop · 'q' quit  (lifecycle only — twin is source of truth)";
+const KEYS_FOOTER: &str = "Keys: 'q' quit";
 const MAX_PANEL_LINE_CHARS: usize = 72;
 
 /// Channels and runtime handles wired in `main()` before the dashboard loop runs.
 struct DigitalTwinRuntime {
-    controller: VehicleController,
     diagnostic_rx: mpsc::UnboundedReceiver<DiagnosticRecord>,
     transition_rx: mpsc::Receiver<PublishedTransitionRecord>,
     /// Keeps CAN ingress and actuation workers alive for the session.
     _runtime_handle: JoinHandle<Result<()>>,
-    /// Key guards only (`s`/`o` once each phase); display state comes from twin emissions.
-    lifecycle: TwinLifecycleCoordinator,
 }
 
 #[tokio::main]
@@ -63,17 +60,13 @@ async fn install_digital_twin() -> Result<DigitalTwinRuntime> {
         .with_diagnostic_channel(diag_tx)
         .with_transition_channel(trans_tx);
 
-    let lifecycle = TwinLifecycleCoordinator::after_install();
     let (controller, _opts) = builder.install_controller().await?;
-    let controller = controller.clone();
-    let runtime_handle = builder.spawn_runtime(controller.clone())?;
+    let runtime_handle = builder.spawn_runtime(controller)?;
 
     Ok(DigitalTwinRuntime {
-        controller,
         diagnostic_rx,
         transition_rx,
         _runtime_handle: runtime_handle,
-        lifecycle,
     })
 }
 
@@ -139,12 +132,6 @@ async fn run_ui_loop(
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('s') | KeyCode::Char('S') => {
-                        handle_start_key(&twin.controller, &mut twin.lifecycle).await;
-                    }
-                    KeyCode::Char('o') | KeyCode::Char('O') => {
-                        handle_stop_key(&twin.controller, &mut twin.lifecycle).await;
-                    }
                     _ => {}
                 }
             }
@@ -165,24 +152,6 @@ fn drain_twin_emissions(
     }
     while let Ok(record) = trans_rx.try_recv() {
         *latest_transition = Some(record);
-    }
-}
-
-async fn handle_start_key(controller: &VehicleController, lifecycle: &mut TwinLifecycleCoordinator) {
-    if !lifecycle.phase().may_send_power_on() {
-        return;
-    }
-    if controller.send_power_on().await.is_ok() {
-        lifecycle.mark_started();
-    }
-}
-
-async fn handle_stop_key(controller: &VehicleController, lifecycle: &mut TwinLifecycleCoordinator) {
-    if !lifecycle.phase().may_send_power_off() {
-        return;
-    }
-    if controller.send_power_off().await.is_ok() {
-        lifecycle.mark_stopping();
     }
 }
 
@@ -224,7 +193,11 @@ fn render_frame(
         standby_panel_lines()
     } else if let Some(d) = latest_diagnostic {
         vec![
-            Line::from(Span::raw(format_field("Level", &format!("{:?}", d.level), line_limit))),
+            Line::from(Span::raw(format_field(
+                "Level",
+                &format!("{:?}", d.level),
+                line_limit,
+            ))),
             Line::from(Span::raw(format_field("Source", &d.source, line_limit))),
             Line::from(Span::raw(format_field(
                 "Message",
@@ -250,7 +223,11 @@ fn render_frame(
         standby_panel_lines()
     } else if let Some(t) = latest_transition {
         vec![
-            Line::from(Span::raw(format_field("Seq", &t.record_seq.to_string(), line_limit))),
+            Line::from(Span::raw(format_field(
+                "Seq",
+                &t.record_seq.to_string(),
+                line_limit,
+            ))),
             Line::from(Span::raw(format_field(
                 "Event",
                 &format_published_event(&t.event),
@@ -363,7 +340,7 @@ fn format_actions_summary(actions: &[PublishedDomainAction]) -> String {
 
 fn standby_panel_lines() -> Vec<Line<'static>> {
     vec![Line::from(Span::raw(
-        "Twin installed; press Start — ledger and diagnostics appear after PowerOn.",
+        "Twin installed; waiting for PowerOn on CAN — ledger and diagnostics appear after lifecycle starts.",
     ))]
 }
 
@@ -374,7 +351,11 @@ fn format_status_line(
     let session_nanos = latest_transition
         .as_ref()
         .map(|t| t.session_start_unix_nanos)
-        .or_else(|| latest_diagnostic.as_ref().map(|d| d.session_start_unix_nanos));
+        .or_else(|| {
+            latest_diagnostic
+                .as_ref()
+                .map(|d| d.session_start_unix_nanos)
+        });
 
     let session_label = session_nanos
         .map(format_unix_nanos_short)
@@ -499,19 +480,16 @@ mod tests {
     }
 
     #[test]
-    fn standby_panels_show_install_message() {
+    fn standby_panels_show_can_lifecycle_message() {
         let lines = standby_panel_lines();
         assert_eq!(lines.len(), 1);
         assert!(lines[0].spans[0].content.contains("PowerOn"));
+        assert!(lines[0].spans[0].content.contains("CAN"));
     }
 
     #[test]
-    fn keys_footer_lists_lifecycle_bindings_only() {
-        assert!(KEYS_FOOTER.contains("'s' start"));
-        assert!(!KEYS_FOOTER.contains("'p'"));
-        assert!(KEYS_FOOTER.contains("'o' stop"));
-        assert!(KEYS_FOOTER.contains("'q' quit"));
-        assert!(KEYS_FOOTER.contains("source of truth"));
+    fn keys_footer_lists_quit_only() {
+        assert_eq!(KEYS_FOOTER, "Keys: 'q' quit");
     }
 
     #[test]
@@ -522,7 +500,7 @@ mod tests {
 
     #[test]
     fn truncate_line_shortens_long_rejection_messages() {
-        let long = "[REJECTED]: PowerOff is invalid while in state DrivingDangerously with extra detail";
+        let long = "[REJECTED]: vehicle must be Idle before PowerOff; current state is DrivingDangerously with extra detail";
         let truncated = truncate_line(long);
         assert!(truncated.chars().count() <= MAX_PANEL_LINE_CHARS);
         assert!(truncated.ends_with('…'));
@@ -531,7 +509,7 @@ mod tests {
     #[test]
     fn format_actions_summary_truncates_log_warning() {
         let summary = format_actions_summary(&[PublishedDomainAction::LogWarning(
-            "[REJECTED]: PowerOff is invalid while in state Driving".into(),
+            "[REJECTED]: vehicle must be Idle before PowerOff; current state is Driving".into(),
         )]);
         assert!(summary.starts_with("LogWarning("));
         assert!(summary.len() < 120);

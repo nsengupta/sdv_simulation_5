@@ -1,6 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use common::domain_types::RPM_IDLE;
 use common::vehicle_physics::calculate_speed_from_rpm;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::{AmbientRoadLightModel, PhysicalWorldModelConfig, RainModel, RpmModel};
 
@@ -71,6 +71,15 @@ impl PhysicalCar {
             self.rain_detected
         );
     }
+
+    pub fn update_and_read(&mut self) -> [common::VssSignal; 3] {
+        self.update();
+        [
+            common::VssSignal::EngineRpm(self.rpm()),
+            common::VssSignal::AmbientLux(self.ambient_lux()),
+            common::VssSignal::RainDetected(self.rain_detected()),
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -83,7 +92,9 @@ mod tests {
     fn smoke_new_car_starts_at_idle_rpm() {
         let car = PhysicalCar::new();
         assert_eq!(car.rpm(), RPM_IDLE);
-        assert!((car.derived_speed_kph() - calculate_speed_from_rpm(RPM_IDLE)).abs() < f64::EPSILON);
+        assert!(
+            (car.derived_speed_kph() - calculate_speed_from_rpm(RPM_IDLE)).abs() < f64::EPSILON
+        );
         assert!((0..=1200).contains(&car.ambient_lux()));
     }
 

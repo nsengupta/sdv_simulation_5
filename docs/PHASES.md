@@ -11,7 +11,7 @@ Overview and target architecture: [`ARCHITECTURE-OVERVIEW.md`](ARCHITECTURE-OVER
 
 ```text
 Phase 1  CAN lifecycle + silent ignore          ← CAN correctness foundation
-Phase 2  Emulator echo + generate on CAN
+Phase 2  Finite lifecycle + telemetry emulator
 Phase 3  Observation capture library + files
 Phase 4  E2E golden regression (CAN, vcan0)
 Phase 5  Split Gateway ↔ Dashboard processes
@@ -28,7 +28,7 @@ Phase 9  Shutdown, disband, polish (TL-6/7/8)
 
 ## Phase 1 — CAN lifecycle + silent ignore while `Off`
 
-**Status:** In progress — implementation and automated tests complete; manual `vcan0` smoke pending  
+**Status:** Done
 **Goal:** CAN path is **semantically correct** before scenario tooling or process splits.
 
 ### Scope
@@ -36,12 +36,13 @@ Phase 9  Shutdown, disband, polish (TL-6/7/8)
 1. Decode CAN **`0x100`** → `FsmEvent::PowerOn` / `PowerOff` on gateway ingress.
 2. **Silent ignore** at twin boundary while FSM is **`Off`**: drop all ingress except `PowerOn`
    (no ledger, no context, no zone updates). Includes `PowerOff` while already `Off`.
-3. Keep programmatic `send_power_on/off()` for transitional dashboard **`s`/`o`** and gateway CI.
+3. At Phase 1 completion, programmatic `send_power_on/off()` remained for the then-transitional
+   Dashboard lifecycle keys and gateway CI. Phase 2 subsequently removed those Dashboard keys.
 
 ### Out of scope
 
 - Emulator transmitting `0x100` (Phase 2)
-- Removing dashboard **`s`/`o`**
+- Dashboard lifecycle-key removal (deferred from Phase 1 and completed in Phase 2)
 - Process split, observation files, Zenoh
 
 ### Touch points (expected)
@@ -64,7 +65,7 @@ Phase 9  Shutdown, disband, polish (TL-6/7/8)
 ### Acceptance
 
 - [x] `cargo test --workspace` passes
-- Manual smoke: pre-Start CAN does **not** climb `Seq`; `0x100` PowerOn starts session
+- [x] Manual `vcan0` smoke: pre-Start CAN does **not** climb `Seq`; `0x100` PowerOn starts session
 
 ### Design choices to confirm at kickoff
 
@@ -74,35 +75,49 @@ Phase 9  Shutdown, disband, polish (TL-6/7/8)
 
 ---
 
-## Phase 2 — Emulator scenario runner (echo + generate)
+## Phase 2 — Finite CAN emulator and observer-only Dashboard
 
-**Status:** Not started  
-**Goal:** Emulator drives full scripted runs **via CAN**, including lifecycle.
+**Status:** Done
+**Goal:** A finite emulator drives lifecycle and telemetry **via CAN** while Dashboard only
+observes the actual twin outcome.
 
 ### Scope
 
-1. CLI modes: **`--mode generate`** (default, today) and **`--mode echo --csv <path>`**.
-2. CSV schema: rows for **`PowerOn`**, sensor frames (`0x102`–`0x104`), standstill, **`PowerOff`**.
-3. Emulator transmits CAN **`0x100`** for lifecycle steps.
-4. Echo mode: deterministic, exits when script completes (or `--loop` optional).
-5. Extract **`emulator-core`** (or equivalent) library crate — shared logic for standalone binary **and** later dashboard embed (API surface only; dashboard wiring in Phase 6).
+1. Require a positive `--readings N`; one reading is one RPM, ambient-lux, and rain cycle.
+2. Transmit exactly `3N + 3` frames:
+   `PowerOn`, then `N × (EngineRpm, AmbientLux, RainDetected)`, then `EngineRpm(0)`, then
+   `PowerOff`.
+3. Keep `EMULATOR_TUNNEL_PROB` and `EMULATOR_RAIN_PROB` as optional probability controls.
+4. Exit after the final PowerOff frame is written.
+5. Rely on the existing twin startup barrier. Its contract test verifies that telemetry sent
+   immediately after PowerOn commits FIFO only after assembly startup reaches `Idle`.
+6. Remove Dashboard lifecycle keys and direct lifecycle injection. Dashboard renders twin-authored
+   diagnostic and ledger output only.
+
+The emulator guarantees frame transmission order, not PowerOff acceptance. PowerOn is first,
+RPM zero is penultimate, and PowerOff is final; if FSM guards reject PowerOff, Dashboard must show
+the twin's unchanged state and rejection evidence.
 
 ### Out of scope
 
+- CSV scenario parsing, authoring, replay, and echo mode are explicitly deferred.
 - Dashboard embedding (Phase 6)
 - Observation file capture (Phase 3)
 - Zenoh
 
 ### Tests (mandatory)
 
-- [ ] Unit: CSV parser → ordered frame sequence
-- [ ] Integration: echo script on mock CAN socket → expected frame IDs/payloads
-- [ ] Manual / optional CI: actuators → gateway/tui_dashboard → emulator echo → full Off→Idle→Off
+- [x] Emulator CLI, model configuration, frame ordering/count, lifecycle boundaries, and sink errors
+- [x] Twin startup-barrier FIFO characterization and controlled shutdown/rejection contracts
+- [x] Dashboard observer-only behavior and waiting-for-CAN rendering
+- [x] Manual `vcan0`: actuators → Dashboard → `emulator --readings 30`
 
 ### Acceptance
 
-- `cargo test -p emulator` (+ new core crate) passes
-- Documented CSV example under `docs/examples/` or `testdata/`
+- [x] Focused checks and `cargo test --workspace` pass
+- [x] Manual `vcan0` run confirms emulator exit, observer-only Dashboard, startup ordering,
+  penultimate RPM zero, final PowerOff, and the twin's actual accepted or rejected final state
+- [x] Mark Phase 2 `Done` only when both acceptance items above pass
 
 ---
 
@@ -150,7 +165,8 @@ Phase 9  Shutdown, disband, polish (TL-6/7/8)
 
 ### Scope
 
-1. Script: setup `vcan0`, start actuators + gateway (or transitional combined app) + emulator echo.
+1. Deferred Phase 4 script: setup `vcan0`, start actuators + gateway (or transitional combined
+   app) + emulator echo.
 2. Capture observation files (Phase 3).
 3. **`observation-compare`** (or diff tool): compare against committed golden under `testdata/golden/`.
 4. CI job (optional `vcan0` / `#[ignore]` locally) documented in README.
@@ -179,7 +195,8 @@ Absorbs the intent of the former [`TODO-connect-to-twin.md`](../TODO-connect-to-
 1. **`gateway` binary**: full twin lifecycle — install, CAN ingress, actuation, observation tee.
 2. **`tui_dashboard` binary**: **no** `TwinRuntimeBuilder` / no in-process twin.
 3. Live observation link: **file tail** or **localhost IPC** (UDS/TCP) — pick one at kickoff.
-4. Remove transitional dashboard **`s`/`o`** (lifecycle only via emulator on CAN).
+4. Preserve the observer-only Dashboard established in Phase 2: lifecycle remains emulator-driven
+   over CAN, with no Dashboard lifecycle injection.
 5. `TwinRuntimeBuilder` channel ownership model unchanged (callers own receivers).
 
 ### Out of scope
@@ -207,8 +224,10 @@ Absorbs the intent of the former [`TODO-connect-to-twin.md`](../TODO-connect-to-
 
 ### Scope
 
-1. Wire **`emulator-core`** into dashboard (spawn in-process task or thread sending to `vcan0`).
-2. **Mode A — CSV:** CLI flag passes CSV to embedded emulator (same as Phase 2 echo).
+1. Deferred Phase 6 work: wire **`emulator-core`** into dashboard (spawn in-process task or thread
+   sending to `vcan0`).
+2. **Deferred Mode A — CSV:** CLI flag passes CSV to embedded emulator (echo behavior is not part
+   of active Phase 2).
 3. **Mode B — TUI driver:** buttons/keys — **PowerOn**, **PowerOff**, **Drive**, **Park**, … map to
    emulator commands (which emit CAN frames, including `0x100`).
 4. Dashboard **never** calls `VehicleController::send_power_on/off()` on the twin.

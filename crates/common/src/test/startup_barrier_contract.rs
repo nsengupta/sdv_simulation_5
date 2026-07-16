@@ -18,25 +18,33 @@
 
 use std::time::Duration;
 
+use tokio::sync::mpsc;
+
 use crate::digital_twin::{TwinMessage, ZoneReply};
-use crate::fsm::{FsmState, HeadlampState, AssemblyId};
-use crate::test::{power_on_to_idle, wait_fsm_state, ActorGuard};
+use crate::fsm::{AssemblyId, FsmState, HeadlampState};
+use crate::observation_records::{PublishedFsmEvent, PublishedFsmState};
+use crate::test::{ActorGuard, power_on_to_idle, wait_fsm_state};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_state::{HeadlampContext, HeadlampZoneReply};
-use crate::VehicleController;
+use crate::{TwinIngressEvent, VehicleController, VssSignal};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /// Turn ID allocated for the startup barrier (`StartAssemblies` loop, turn 2).
 const STARTUP_BARRIER_TURN: u64 = 2;
 
-/// Turn ID allocated for the shutdown barrier (`StopAssemblies` loop).
-/// After boot via `power_on_to_idle` turn counter is at 3; shutdown barrier = turn 3.
-const SHUTDOWN_BARRIER_TURN: u64 = 3;
+/// Current startup allocates one barrier turn for each named assembly: headlamp and wiper.
+/// These counts keep direct IDs confined to the silent-zone test seam without exposing
+/// production turn-allocation internals.
+const STARTUP_ASSEMBLY_BARRIER_COUNT: u64 = 2;
+const QUEUED_POST_POWER_ON_INGRESS_COUNT: u64 = 4;
 
 fn zone_reply_with_state(state: HeadlampState) -> ZoneReply {
     ZoneReply::Headlamp(HeadlampZoneReply {
-        ctx: HeadlampContext { state, ack_pending_since: None },
+        ctx: HeadlampContext {
+            state,
+            ack_pending_since: None,
+        },
         outcomes: vec![],
     })
 }
@@ -169,6 +177,119 @@ async fn given_power_off_with_silent_headlamp_then_fsm_stays_in_preparing_to_sto
         "silent headlamp must keep FSM in PreparingToStop; got {:?}",
         snapshot.current_state()
     );
-    // Verify the shutdown barrier turn ID is what we expect (turn 3 after boot).
-    let _ = SHUTDOWN_BARRIER_TURN; // referenced for documentation purposes
+}
+
+// ── Test 5 ───────────────────────────────────────────────────────────────────
+
+/// Ingress queued during startup must not commit until the barrier clears; post-start
+/// telemetry commits FIFO from `Idle`, and RPM zero precedes `PowerOff`.
+#[tokio::test]
+async fn given_ingress_immediately_after_power_on_when_startup_unblocks_then_commits_fifo_from_idle()
+ {
+    let (transition_tx, mut transition_rx) = mpsc::channel(32);
+    let opts = VehicleControllerRuntimeOptions {
+        transition_tx: Some(transition_tx),
+        test_silent_headlamp: true,
+        ..Default::default()
+    };
+    let (controller, handle) =
+        VehicleController::install_and_start_with_options("STARTUP-FIFO".to_string(), opts)
+            .await
+            .expect("spawn controller");
+    let _guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
+
+    controller.send_power_on().await.expect("power on");
+    tokio::task::yield_now().await;
+
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(900)))
+        .await
+        .expect("lux during startup");
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::EngineRpm(1200)))
+        .await
+        .expect("drive during startup");
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::EngineRpm(0)))
+        .await
+        .expect("standstill during startup");
+    controller
+        .send_power_off()
+        .await
+        .expect("power off during startup");
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    let blocked = controller
+        .get_snapshot(Some(ractor::concurrency::Duration::from_millis(50)))
+        .await
+        .expect("snapshot while startup blocked");
+    assert!(matches!(
+        blocked.current_state(),
+        FsmState::PreparingToStart { .. }
+    ));
+    assert_ne!(blocked.context().visibility.ambient_lux, 900);
+    assert_ne!(blocked.context().powertrain.primary_rpm(), 1200);
+
+    let power_on = transition_rx.recv().await.expect("PowerOn row");
+    assert_eq!(power_on.event, PublishedFsmEvent::PowerOn);
+    assert!(
+        transition_rx.try_recv().is_err(),
+        "later turns must remain blocked"
+    );
+
+    inject_zone_ready(&controller, STARTUP_BARRIER_TURN, HeadlampState::Ready);
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    loop {
+        let snapshot = controller
+            .get_snapshot(Some(ractor::concurrency::Duration::from_millis(50)))
+            .await
+            .expect("snapshot while waiting for PowerOff turn");
+        if matches!(snapshot.current_state(), FsmState::PreparingToStop(_)) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for PreparingToStop; got {:?}",
+            snapshot.current_state()
+        );
+        tokio::task::yield_now().await;
+    }
+
+    let mut rows = Vec::new();
+    for _ in 0..6 {
+        rows.push(
+            transition_rx
+                .recv()
+                .await
+                .expect("ordered startup/user row"),
+        );
+    }
+    assert_eq!(rows[2].event, PublishedFsmEvent::UpdateAmbientLux(900));
+    assert_eq!(rows[2].old_state, PublishedFsmState::Idle);
+    assert_eq!(rows[3].event, PublishedFsmEvent::UpdateRpm(1200));
+    assert_eq!(rows[3].next_state, PublishedFsmState::Driving);
+    assert_eq!(rows[4].event, PublishedFsmEvent::UpdateRpm(0));
+    assert_eq!(rows[4].next_state, PublishedFsmState::Idle);
+    assert_eq!(rows[5].event, PublishedFsmEvent::PowerOff);
+    assert!(matches!(
+        rows[5].next_state,
+        PublishedFsmState::PreparingToStop
+    ));
+
+    // The next turn after both startup barriers and the four queued ingress turns is
+    // the first shutdown assembly barrier (headlamp).
+    const QUEUED_SHUTDOWN_HEADLAMP_TURN: u64 =
+        STARTUP_BARRIER_TURN + STARTUP_ASSEMBLY_BARRIER_COUNT + QUEUED_POST_POWER_ON_INGRESS_COUNT;
+    inject_zone_ready(
+        &controller,
+        QUEUED_SHUTDOWN_HEADLAMP_TURN,
+        HeadlampState::Off,
+    );
+    wait_fsm_state(&controller, FsmState::Off, Duration::from_millis(500)).await;
+    let _headlamp_off = transition_rx.recv().await.expect("headlamp shutdown row");
+    let final_off = transition_rx.recv().await.expect("wiper shutdown row");
+    assert_eq!(final_off.next_state, PublishedFsmState::Off);
 }

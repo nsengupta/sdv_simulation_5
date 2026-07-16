@@ -1,14 +1,10 @@
-//! Phase 2 generator — the "Virtual ECU" (composite wheel RPM + ambient lux on CAN).
-
-pub mod car_physics;
-pub mod models;
-
 use anyhow::Result;
-use car_physics::PhysicalCar;
-use common::VssSignal;
-use models::PhysicalWorldModelConfig;
-use socketcan::{CanSocket, Socket};
-use std::{thread, time::Duration};
+use emulator::car_physics::PhysicalCar;
+use emulator::cli::{ProbabilityOverride, apply_probability_override, parse_args};
+use emulator::models::PhysicalWorldModelConfig;
+use emulator::runner::run_finite;
+use emulator::sink::SocketCanSink;
+use std::{env, thread};
 
 /// Override for the per-tick probability of *entering* a tunnel (low lux → headlamp ON).
 ///
@@ -26,63 +22,37 @@ const ENV_TUNNEL_PROB: &str = "EMULATOR_TUNNEL_PROB";
 /// (≈ every ~50 s) or `0.0` to disable rain entirely.
 const ENV_RAIN_PROB: &str = "EMULATOR_RAIN_PROB";
 
-fn parse_rain_prob_env() -> Option<f32> {
-    let raw = std::env::var(ENV_RAIN_PROB).ok()?;
-    match raw.trim().parse::<f32>() {
-        Ok(p) if (0.0..=1.0).contains(&p) => Some(p),
-        _ => {
-            eprintln!(
-                "[emulator] ignoring {ENV_RAIN_PROB}={raw:?} — expected a float in 0.0..=1.0"
-            );
-            None
-        }
-    }
-}
-
-fn parse_tunnel_prob_env() -> Option<f32> {
-    let raw = std::env::var(ENV_TUNNEL_PROB).ok()?;
-    match raw.trim().parse::<f32>() {
-        Ok(p) if (0.0..=1.0).contains(&p) => Some(p),
-        _ => {
-            eprintln!(
-                "[emulator] ignoring {ENV_TUNNEL_PROB}={raw:?} — expected a float in 0.0..=1.0"
-            );
-            None
-        }
-    }
-}
-
 fn main() -> Result<()> {
-    let interface = "vcan0";
-    let socket = CanSocket::open(interface)?;
-
+    let args = parse_args(env::args().skip(1))?;
     let mut cfg = PhysicalWorldModelConfig::daytime_tunnel_profile();
-    if let Some(p) = parse_tunnel_prob_env() {
-        cfg.ambient_road_light.tunnel_event_probability_per_tick = p;
-        println!("[emulator] {ENV_TUNNEL_PROB}={p} — tunnel entry probability per 100 ms tick");
-    }
-    if let Some(p) = parse_rain_prob_env() {
-        cfg.rain.rain_event_probability_per_tick = p;
-        println!("[emulator] {ENV_RAIN_PROB}={p} — rain entry probability per 100 ms tick");
-    }
+
+    apply_env_probability_override(
+        ENV_TUNNEL_PROB,
+        &mut cfg.ambient_road_light.tunnel_event_probability_per_tick,
+        "tunnel entry probability per 100 ms tick",
+    );
+    apply_env_probability_override(
+        ENV_RAIN_PROB,
+        &mut cfg.rain.rain_event_probability_per_tick,
+        "rain entry probability per 100 ms tick",
+    );
+
+    let mut sink = SocketCanSink::open("vcan0")?;
     let mut car = PhysicalCar::new_with_config(cfg);
+    run_finite(&mut sink, &mut car, args.readings, thread::sleep)
+}
 
-    println!("🚀 Emulator active on {interface}. Publishing RPM + ambient lux + rain sensor...");
-
-    const TICK_MS: u64 = 100;
-
-    loop {
-        car.update();
-
-        let rpm_signal = VssSignal::EngineRpm(car.rpm());
-        socket.write_frame(&rpm_signal.to_can_frame()?)?;
-
-        let ambient_lux_signal = VssSignal::AmbientLux(car.ambient_lux());
-        socket.write_frame(&ambient_lux_signal.to_can_frame()?)?;
-
-        let rain_signal = VssSignal::RainDetected(car.rain_detected());
-        socket.write_frame(&rain_signal.to_can_frame()?)?;
-
-        thread::sleep(Duration::from_millis(TICK_MS));
+fn apply_env_probability_override(name: &str, target: &mut f32, success_text: &str) {
+    let raw = env::var(name).ok();
+    match apply_probability_override(raw.as_deref(), target) {
+        ProbabilityOverride::Applied(value) => {
+            println!("[emulator] {name}={value} — {success_text}");
+        }
+        ProbabilityOverride::Missing => {}
+        ProbabilityOverride::Invalid => {
+            if let Some(raw) = raw {
+                eprintln!("[emulator] ignoring {name}={raw:?} — expected a float in 0.0..=1.0");
+            }
+        }
     }
 }

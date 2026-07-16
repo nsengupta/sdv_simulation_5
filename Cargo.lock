@@ -276,7 +276,6 @@ dependencies = [
  "common",
  "rand 0.10.2",
  "socketcan",
- "tokio",
 ]
 
 [[package]]

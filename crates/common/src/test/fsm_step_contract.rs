@@ -1,13 +1,11 @@
 //! Unit tests for the FSM step contract (`step`).
 
-use crate::digital_twin::{verify_state_laws, DigitalTwinCar, DigitalTwinCarError};
-use crate::fsm::{DomainAction, FsmEvent, FsmState, AssemblyId};
+use crate::digital_twin::{DigitalTwinCar, DigitalTwinCarError, verify_state_laws};
+use crate::fsm::{AssemblyId, DomainAction, FsmEvent, FsmState};
 use crate::twin_runtime::twin_turn;
 use crate::vehicle_state::VehicleContext;
 
-use crate::vehicle_physics::{
-    EXTREME_OPERATION_WARNING_MESSAGE, SPEED_THRESHOLD_WARNING_MESSAGE,
-};
+use crate::vehicle_physics::{EXTREME_OPERATION_WARNING_MESSAGE, SPEED_THRESHOLD_WARNING_MESSAGE};
 use std::time::{Duration, Instant};
 
 fn valid_twin_context() -> VehicleContext {
@@ -65,7 +63,10 @@ fn test_transition_record_carries_intended_actions_without_assembly_signals() {
 
     // The execution feed keeps StartAssemblies (the actor creates assembly barriers from it).
     assert!(
-        result.actions.iter().any(|a| matches!(a, DomainAction::StartAssemblies(_))),
+        result
+            .actions
+            .iter()
+            .any(|a| matches!(a, DomainAction::StartAssemblies(_))),
         "StartAssemblies must be in the execution feed; got: {:?}",
         result.actions
     );
@@ -73,7 +74,9 @@ fn test_transition_record_carries_intended_actions_without_assembly_signals() {
     // The ledger projection records genuine domain intents but drops StartAssemblies.
     let recorded = &result.transition_record.actions;
     assert!(
-        recorded.iter().all(|a| !matches!(a, DomainAction::StartAssemblies(_))),
+        recorded
+            .iter()
+            .all(|a| !matches!(a, DomainAction::StartAssemblies(_))),
         "StartAssemblies must NOT appear in the ledger record; got: {:?}",
         recorded
     );
@@ -82,7 +85,12 @@ fn test_transition_record_carries_intended_actions_without_assembly_signals() {
     let expected: Vec<DomainAction> = result
         .actions
         .iter()
-        .filter(|a| !matches!(a, DomainAction::StartAssemblies(_) | DomainAction::StopAssemblies(_)))
+        .filter(|a| {
+            !matches!(
+                a,
+                DomainAction::StartAssemblies(_) | DomainAction::StopAssemblies(_)
+            )
+        })
         .cloned()
         .collect();
     assert_eq!(recorded, &expected);
@@ -107,9 +115,9 @@ fn test_step_high_speed_below_rpm_threshold_still_warns_on_speed() {
     assert!(result.actions.contains(&DomainAction::LogWarning(
         SPEED_THRESHOLD_WARNING_MESSAGE.to_string()
     )));
-    assert!(!result
-        .actions
-        .contains(&DomainAction::LogWarning(EXTREME_OPERATION_WARNING_MESSAGE.to_string())));
+    assert!(!result.actions.contains(&DomainAction::LogWarning(
+        EXTREME_OPERATION_WARNING_MESSAGE.to_string()
+    )));
 }
 
 #[test]
@@ -120,21 +128,41 @@ fn test_step_standard_commute_flow() {
     // Phase 8: PreparingToStart/Stop are now struct variants carrying assembly IDs.
     // Equality checks use matches! with { .. } wildcards.
     let sequence: &[(FsmEvent, fn(&FsmState) -> bool)] = &[
-        (FsmEvent::PowerOn,                                     |s| matches!(s, FsmState::PreparingToStart { .. })),
-        (FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp),     |s| matches!(s, FsmState::PreparingToStart { .. })),
-        (FsmEvent::AssemblyZoneReady(AssemblyId::Wiper),        |s| matches!(s, FsmState::Idle)),
-        (FsmEvent::UpdateRpm(1500),                             |s| matches!(s, FsmState::Driving)),
-        (FsmEvent::UpdateRpm(1300),                             |s| matches!(s, FsmState::Driving)),
-        (FsmEvent::UpdateRpm(0),                                |s| matches!(s, FsmState::Idle)),
-        (FsmEvent::PowerOff,                                    |s| matches!(s, FsmState::PreparingToStop { .. })),
-        (FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp),     |s| matches!(s, FsmState::PreparingToStop { .. })),
-        (FsmEvent::AssemblyZoneReady(AssemblyId::Wiper),        |s| matches!(s, FsmState::Off)),
+        (FsmEvent::PowerOn, |s| {
+            matches!(s, FsmState::PreparingToStart { .. })
+        }),
+        (FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp), |s| {
+            matches!(s, FsmState::PreparingToStart { .. })
+        }),
+        (FsmEvent::AssemblyZoneReady(AssemblyId::Wiper), |s| {
+            matches!(s, FsmState::Idle)
+        }),
+        (FsmEvent::UpdateRpm(1500), |s| {
+            matches!(s, FsmState::Driving)
+        }),
+        (FsmEvent::UpdateRpm(1300), |s| {
+            matches!(s, FsmState::Driving)
+        }),
+        (FsmEvent::UpdateRpm(0), |s| matches!(s, FsmState::Idle)),
+        (FsmEvent::PowerOff, |s| {
+            matches!(s, FsmState::PreparingToStop { .. })
+        }),
+        (FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp), |s| {
+            matches!(s, FsmState::PreparingToStop { .. })
+        }),
+        (FsmEvent::AssemblyZoneReady(AssemblyId::Wiper), |s| {
+            matches!(s, FsmState::Off)
+        }),
     ];
 
     for (event, check) in sequence {
         let result = twin_turn(car.current_state(), car.context(), event, Instant::now());
         car.apply_step(result.next_state, result.modified_ctx);
-        assert!(check(car.current_state()), "event={event:?}, got {:?}", car.current_state());
+        assert!(
+            check(car.current_state()),
+            "event={event:?}, got {:?}",
+            car.current_state()
+        );
     }
 }
 
@@ -167,7 +195,12 @@ fn test_state_laws_hold_over_a_legal_journey_and_records_carry_intents() {
 
         // Records carry intents (WI-1): entering ExtremeOperationWarning emits StartBuzzer.
         if matches!(result.next_state, FsmState::ExtremeOperationWarning(_)) {
-            assert!(result.transition_record.actions.contains(&DomainAction::StartBuzzer));
+            assert!(
+                result
+                    .transition_record
+                    .actions
+                    .contains(&DomainAction::StartBuzzer)
+            );
             reached_warning = true;
         }
 
@@ -175,7 +208,10 @@ fn test_state_laws_hold_over_a_legal_journey_and_records_carry_intents() {
         ctx = result.modified_ctx;
     }
 
-    assert!(reached_warning, "journey should reach ExtremeOperationWarning");
+    assert!(
+        reached_warning,
+        "journey should reach ExtremeOperationWarning"
+    );
 }
 
 #[test]
@@ -245,6 +281,25 @@ fn test_step_warning_recovery_on_tick_uses_passed_time() {
     );
     assert_eq!(recovered.next_state, FsmState::Driving);
     assert!(recovered.actions.contains(&DomainAction::StopBuzzer));
+}
+
+#[test]
+fn power_off_while_driving_requires_idle_and_preserves_state() {
+    let mut ctx = VehicleContext::default();
+    ctx.powertrain.apply_rpm(1200);
+    ctx.powertrain.refresh_speed();
+
+    let result = twin_turn(
+        &FsmState::Driving,
+        &ctx,
+        &FsmEvent::PowerOff,
+        Instant::now(),
+    );
+
+    assert_eq!(result.next_state, FsmState::Driving);
+    assert!(result.actions.contains(&DomainAction::LogWarning(
+        "[REJECTED]: vehicle must be Idle before PowerOff; current state is Driving".to_string()
+    )));
 }
 
 // ── Phase 8 RED test ───────────────────────────────────────────────────────────────────
