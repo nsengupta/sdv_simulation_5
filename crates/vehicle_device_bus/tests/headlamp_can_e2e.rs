@@ -5,9 +5,9 @@
 
 use std::time::{Duration, Instant};
 
-use common::{ActuationCommand, CorrelationId, PhysicalCarVocabulary};
+use common::{ActuationCommand, CorrelationId, TwinIngressEvent};
 use socketcan::{CanFilter, CanSocket, EmbeddedFrame, Socket, SocketOptions};
-use vehicle_device_bus::devices::front_headlamp::codec::{payload_to_physical, KIND_ACK_ON, KIND_CMD_ON, KIND_NACK_ON};
+use vehicle_device_bus::devices::front_headlamp::codec::{payload_to_twin_ingress, KIND_ACK_ON, KIND_CMD_ON, KIND_NACK_ON};
 use vehicle_device_bus::devices::front_headlamp::can::{
     actuation_command_wire_meta, decode_payload_from_can_frame, encode_ack_frame, encode_command_frame,
     encode_nack_frame,
@@ -107,11 +107,11 @@ async fn front_headlamp_ack_frame_round_trips_over_vcan_and_decodes() {
     let payload = decode_payload_from_can_frame(&got)
         .expect("decode front-headlamp payload from CAN");
     assert_eq!((payload.session_id, payload.sequence_no), expected_wire);
-    let physical = payload_to_physical(payload)
-        .expect("ACK frame should map to physical vocabulary");
+    let twin_ingress = payload_to_twin_ingress(payload)
+        .expect("ACK frame should map to twin ingress");
     assert!(matches!(
-        physical,
-        PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: true }
+        twin_ingress,
+        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true }
     ));
 }
 
@@ -131,16 +131,16 @@ async fn front_headlamp_nack_frame_round_trips_over_vcan_and_decodes() {
         .expect("did not receive expected NACK frame kind on vcan0 before timeout");
     let payload = decode_payload_from_can_frame(&got)
         .expect("decode front-headlamp payload from CAN");
-    let physical = payload_to_physical(payload)
-        .expect("NACK frame should map to physical vocabulary");
+    let twin_ingress = payload_to_twin_ingress(payload)
+        .expect("NACK frame should map to twin ingress");
     assert!(matches!(
-        physical,
-        PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command: true }
+        twin_ingress,
+        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true }
     ));
 }
 
 #[tokio::test]
-async fn front_headlamp_command_frame_is_not_ingressed_as_physical_event() {
+async fn front_headlamp_command_frame_is_not_twin_ingress() {
     let Some((tx, rx)) = open_bus_pair() else {
         return;
     };
@@ -156,8 +156,8 @@ async fn front_headlamp_command_frame_is_not_ingressed_as_physical_event() {
     let payload = decode_payload_from_can_frame(&got)
         .expect("decode front-headlamp payload from CAN");
     assert!(
-        payload_to_physical(payload).is_none(),
-        "command frames must not be ingressed as physical ACK/NACK events"
+        payload_to_twin_ingress(payload).is_none(),
+        "command frames must not be ingressed as ACK/NACK feedback"
     );
 }
 

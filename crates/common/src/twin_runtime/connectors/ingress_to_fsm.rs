@@ -1,19 +1,21 @@
 use super::projection::{Projector, ProjectionError};
-use crate::digital_twin::DigitalTwinCarVocabulary;
-use crate::domain_types::PhysicalCarVocabulary;
+use crate::digital_twin::TwinMessage;
+use crate::domain_types::TwinIngressEvent;
 use crate::fsm::{FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection, FsmEvent};
-use crate::signals::VssSignal;
+use crate::signals::{LifecycleCommand, VssSignal};
 
 #[derive(Debug, Default, Clone, Copy)]
-pub struct PhysicalToDigitalProjector;
+pub struct IngressToFsmProjector;
 
-impl Projector<PhysicalCarVocabulary, DigitalTwinCarVocabulary> for PhysicalToDigitalProjector {
-    fn project(&self, input: PhysicalCarVocabulary) -> Result<DigitalTwinCarVocabulary, ProjectionError> {
+impl Projector<TwinIngressEvent, TwinMessage> for IngressToFsmProjector {
+    fn project(&self, input: TwinIngressEvent) -> Result<TwinMessage, ProjectionError> {
         let fsm = match input {
-            PhysicalCarVocabulary::TelemetryUpdate(vss) => match vss {
-                VssSignal::VehicleSpeed(_) => {
+            TwinIngressEvent::Lifecycle(LifecycleCommand::PowerOn) => FsmEvent::PowerOn,
+            TwinIngressEvent::Lifecycle(LifecycleCommand::PowerOff) => FsmEvent::PowerOff,
+            TwinIngressEvent::Telemetry(vss) => match vss {
+                VssSignal::Speed(_) => {
                     return Err(ProjectionError::InvalidPayload(
-                        "observed VehicleSpeed not wired yet; twin derives speed from EngineRpm",
+                        "observed Speed not wired yet; twin derives speed from EngineRpm",
                     ));
                 }
                 VssSignal::EngineRpm(rpm) => FsmEvent::UpdateRpm(rpm),
@@ -21,16 +23,16 @@ impl Projector<PhysicalCarVocabulary, DigitalTwinCarVocabulary> for PhysicalToDi
                 VssSignal::RainDetected(true)  => FsmEvent::RainsStarted,
                 VssSignal::RainDetected(false) => FsmEvent::RainsStopped,
             },
-            PhysicalCarVocabulary::TimerTick => FsmEvent::TimerTick,
-            PhysicalCarVocabulary::SystemReset => FsmEvent::PowerOff,
-            PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command } => {
+            TwinIngressEvent::TimerTick => FsmEvent::TimerTick,
+            TwinIngressEvent::SystemReset => FsmEvent::PowerOff,
+            TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command } => {
                 if on_command {
                     FsmEvent::FrontHeadlampOnAck
                 } else {
                     FsmEvent::FrontHeadlampOffAck
                 }
             }
-            PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command } => {
+            TwinIngressEvent::FrontHeadlampCommandRejected { on_command } => {
                 FsmEvent::FrontHeadlampActuationIncomplete {
                     direction: if on_command {
                         FrontHeadlampSwitchDirection::On
@@ -41,6 +43,6 @@ impl Projector<PhysicalCarVocabulary, DigitalTwinCarVocabulary> for PhysicalToDi
                 }
             }
         };
-        Ok(DigitalTwinCarVocabulary::Fsm(fsm))
+        Ok(TwinMessage::Fsm(fsm))
     }
 }

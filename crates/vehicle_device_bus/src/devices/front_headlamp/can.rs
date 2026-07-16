@@ -125,8 +125,8 @@ pub fn decode_payload_from_can_frame(frame: &CanFrame) -> Option<FrontHeadlampAc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::devices::front_headlamp::codec::payload_to_physical;
-    use common::PhysicalCarVocabulary;
+    use crate::devices::front_headlamp::codec::payload_to_twin_ingress;
+    use common::TwinIngressEvent;
 
     fn sample_corr() -> CorrelationId {
         CorrelationId {
@@ -137,16 +137,16 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_ack_on_to_physical() {
+    fn round_trip_ack_on_to_twin_ingress() {
         let cmd = ActuationCommand::SwitchFrontHeadlampOn {
             correlation_id: sample_corr(),
         };
         let frame = encode_ack_frame(&cmd).expect("ack frame");
         let payload = decode_payload_from_can_frame(&frame).expect("decode payload");
-        let phys = payload_to_physical(payload).expect("maps");
+        let twin_ingress = payload_to_twin_ingress(payload).expect("maps");
         assert!(matches!(
-            phys,
-            PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: true }
+            twin_ingress,
+            TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true }
         ));
     }
 
@@ -157,7 +157,7 @@ mod tests {
         };
         let frame = encode_command_frame(&cmd).expect("cmd frame");
         let payload = decode_payload_from_can_frame(&frame).expect("decode payload");
-        assert!(payload_to_physical(payload).is_none());
+        assert!(payload_to_twin_ingress(payload).is_none());
     }
 
     #[test]

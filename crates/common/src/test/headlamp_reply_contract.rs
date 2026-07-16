@@ -5,13 +5,13 @@
 
 use std::time::Instant;
 
-use crate::digital_twin::DigitalTwinCarVocabulary;
+use crate::digital_twin::TwinMessage;
 use crate::fsm::HeadlampState;
 use crate::observation_records::transition::{PublishedHeadlampContext, PublishedHeadlampState};
 use crate::test::{expect_actuation_command, inject_matching_ack, power_on_to_idle, ActorGuard};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_state::{HeadlampContext, HeadlampMessage};
-use crate::{PhysicalCarVocabulary, PublishedFsmEvent, VehicleController, VssSignal};
+use crate::{TwinIngressEvent, PublishedFsmEvent, VehicleController, VssSignal};
 use ractor::concurrency::Duration;
 use tokio::sync::mpsc;
 
@@ -27,7 +27,7 @@ fn assert_published_headlamp_matches_runtime(
         "ledger headlamp.state must match persisted runtime snapshot"
     );
     assert_eq!(
-        published.ack_pending_since_unix.is_some(),
+        published.ack_pending_since_at_unix.is_some(),
         runtime.ack_pending_since.is_some(),
         "ledger ACK-wait presence must match runtime (temporal anchor may differ in wall projection)"
     );
@@ -73,7 +73,7 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
     let _ = rx.recv().await.expect("ledger row for wiper zone ready → idle");
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
@@ -86,7 +86,7 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
         PublishedHeadlampState::OnRequested,
     );
     assert!(
-        lux_record.current_ctx.headlamp.ack_pending_since_unix.is_some(),
+        lux_record.current_ctx.headlamp.ack_pending_since_at_unix.is_some(),
         "ON request should leave ACK-wait in ledger current_ctx"
     );
 
@@ -101,7 +101,7 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
         PublishedHeadlampState::On,
     );
     assert!(
-        ack_record.current_ctx.headlamp.ack_pending_since_unix.is_none(),
+        ack_record.current_ctx.headlamp.ack_pending_since_at_unix.is_none(),
         "settled ON must clear ACK-wait in ledger"
     );
 
@@ -157,7 +157,7 @@ async fn given_power_on_only_when_get_status_then_ledger_headlamp_matches_embed(
 
     let snapshot = actor_ref
         .call(
-            |port| DigitalTwinCarVocabulary::GetStatus(port),
+            |port| TwinMessage::GetStatus(port),
             Some(ACTOR_TIMEOUT),
         )
         .await

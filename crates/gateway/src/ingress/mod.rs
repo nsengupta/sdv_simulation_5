@@ -1,3 +1,3 @@
 pub mod mapping;
 
-pub use mapping::vehicle_event_to_physical_vocabulary;
+pub use mapping::can_frame_to_twin_ingress;

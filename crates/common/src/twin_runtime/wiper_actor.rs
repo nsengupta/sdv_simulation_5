@@ -1,5 +1,5 @@
 //! L4 wiper twinlet — brain **tell**s [`WiperActorMsg::Apply`]; twinlet **tell**s
-//! [`DigitalTwinCarVocabulary::ZoneReady`] immediately (no ACK protocol).
+//! [`TwinMessage::ZoneReady`] immediately (no ACK protocol).
 //!
 //! Phase 7: all wiper transitions are direct — no `OffRequested`/`OnRequested` intermediate
 //! states, no ACK timer.  `post_stop` is a no-op.
@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use std::time::Instant;
 
-use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneReply};
+use crate::digital_twin::{TwinMessage, ZoneReply};
 use crate::vehicle_state::{WiperContext, WiperMessage};
 
 /// Tell payload: one [`WiperMessage`] for this brain [`turn_id`](Self::turn_id).
@@ -19,7 +19,7 @@ pub struct WiperActorVocabulary {
     pub turn_id: u64,
     /// Matches brain tell-back wait attempt (retries use incrementing ids).
     pub tell_attempt: u32,
-    pub brain: ActorRef<DigitalTwinCarVocabulary>,
+    pub brain: ActorRef<TwinMessage>,
 }
 
 /// Wiper twinlet mailbox — brain tells only (no ACK deadline variant).
@@ -96,7 +96,7 @@ impl WiperActor {
         let zone_reply = state.ctx.on_receiving_message(message);
         state.ctx = zone_reply.ctx.clone();
         brain
-            .send_message(DigitalTwinCarVocabulary::ZoneReady {
+            .send_message(TwinMessage::ZoneReady {
                 zone_id: crate::fsm::AssemblyId::Wiper,
                 turn_id,
                 tell_attempt,
@@ -114,7 +114,7 @@ impl WiperActor {
 /// Fire-and-forget tell to the wiper twinlet (no reply port on this hop).
 pub fn tell_wiper_zone(
     wiper: &ActorRef<WiperActorMsg>,
-    brain: &ActorRef<DigitalTwinCarVocabulary>,
+    brain: &ActorRef<TwinMessage>,
     turn_id: u64,
     tell_attempt: u32,
     message: WiperMessage,

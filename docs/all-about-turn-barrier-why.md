@@ -44,7 +44,7 @@ If `WiperActor` has crashed, deadlocked, or is simply too slow, the Brain never 
 `ZoneReady { zone_id: Wiper, turn_id: N+1 }`. After 500ms the tell-back timer fires:
 
 ```
-DigitalTwinCarVocabulary::ZoneTellBackTimeout {
+TwinMessage::ZoneTellBackTimeout {
     zone_id: Wiper,
     turn_id: N+1,
     tell_attempt: 0,
@@ -450,9 +450,9 @@ Each `PublishedTransitionRecord` captures the *result* of one FSM turn (zero or 
 ```rust
 pub struct PublishedTransitionRecord {
     pub car_identity: String,
-    pub session_epoch_unix_nanos: u128,
+    pub session_start_unix_nanos: u128,
     pub record_seq: u64,
-    pub at_unix: Duration,
+    pub recorded_at_unix: Duration,
     pub event: PublishedFsmEvent,
     pub old_state: PublishedFsmState,
     pub next_state: PublishedFsmState,
@@ -474,7 +474,7 @@ A replay tool reading these entries sees a sequence of state transitions:
 ### What the ledger captures ✅
 
 1. **The FSM path**: Every `event`→`old_state`→`next_state` transition, with full context deltas.
-2. **The wall-clock timing**: `at_unix` gives exactly when the transition committed.
+2. **The wall-clock timing**: `recorded_at_unix` gives exactly when the transition committed.
 3. **The ordering**: `record_seq` is strictly monotonic — no two entries share the same seq.
 4. **The domain actions**: What the FSM decided to do (start/stop assemblies, log warnings, etc.).
 
@@ -584,7 +584,7 @@ Without this provenance, the replay tool can't determine whether to inject the e
 | # | Data | Current `PublishedTransitionRecord` | Needed for replay? |
 |---|------|----------------------------------|-------------------|
 | 1 | FSM transition (event + old/new state + ctx) | ✅ `event`, `old_state`, `next_state`, `old_ctx`, `current_ctx` | Yes |
-| 2 | Wall-clock timing of commit | ✅ `at_unix`, `session_epoch_unix_nanos` | Yes |
+| 2 | Wall-clock timing of commit | ✅ `recorded_at_unix`, `session_start_unix_nanos` | Yes |
 | 3 | Commit order | ✅ `record_seq` | Yes |
 | 4 | Domain actions | ✅ `actions` | Yes |
 | 5 | **Zone replies that caused the transition** | ❌ Not recorded | Yes — otherwise replay can't reproduce `zone_turn()` |

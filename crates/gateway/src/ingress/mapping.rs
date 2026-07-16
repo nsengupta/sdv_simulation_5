@@ -1,60 +1,64 @@
-use common::facade::{PhysicalCarVocabulary, VehicleEvent};
+use common::facade::{LifecycleCommand, TwinIngressEvent, VssSignal};
+use socketcan::CanFrame;
 
-/// Maps ingress/domain events to the canonical physical vocabulary.
-pub fn vehicle_event_to_physical_vocabulary(ev: VehicleEvent) -> PhysicalCarVocabulary {
-    match ev {
-        VehicleEvent::TelemetryUpdate(vss) => PhysicalCarVocabulary::TelemetryUpdate(vss),
-        VehicleEvent::TimerTick => PhysicalCarVocabulary::TimerTick,
-        VehicleEvent::SystemReset => PhysicalCarVocabulary::SystemReset,
+/// Decode a generic CAN frame into the canonical, transport-independent twin ingress vocabulary.
+///
+/// Device-specific actuator response frames are intentionally handled by their correlation-aware
+/// policies after this generic lifecycle/telemetry decoder returns `None`.
+pub fn can_frame_to_twin_ingress(frame: &CanFrame) -> Option<TwinIngressEvent> {
+    if let Some(command) = LifecycleCommand::from_can_frame(frame) {
+        return Some(TwinIngressEvent::Lifecycle(command));
     }
+
+    VssSignal::from_can_frame(frame).map(TwinIngressEvent::Telemetry)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::vehicle_event_to_physical_vocabulary;
-    use common::facade::{PhysicalCarVocabulary, VehicleEvent, VssSignal};
+    use super::can_frame_to_twin_ingress;
+    use common::facade::{LifecycleCommand, TwinIngressEvent, VssSignal};
 
     #[test]
-    fn given_timer_tick_when_mapped_then_returns_physical_timer_tick() {
-        let msg = vehicle_event_to_physical_vocabulary(VehicleEvent::TimerTick);
-        match msg {
-            PhysicalCarVocabulary::TimerTick => {}
-            other => panic!("unexpected mapping: {other:?}"),
-        }
-    }
+    fn lifecycle_power_on_frame_maps_to_twin_ingress() {
+        let frame = LifecycleCommand::PowerOn
+            .to_can_frame()
+            .expect("encode PowerOn");
 
-    #[test]
-    fn given_system_reset_when_mapped_then_returns_physical_reset() {
-        let msg = vehicle_event_to_physical_vocabulary(VehicleEvent::SystemReset);
-        match msg {
-            PhysicalCarVocabulary::SystemReset => {}
-            other => panic!("unexpected mapping: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn given_engine_rpm_signal_when_mapped_then_preserves_value() {
-        let msg = vehicle_event_to_physical_vocabulary(VehicleEvent::TelemetryUpdate(
-            VssSignal::EngineRpm(4567),
+        assert!(matches!(
+            can_frame_to_twin_ingress(&frame),
+            Some(TwinIngressEvent::Lifecycle(LifecycleCommand::PowerOn))
         ));
-        match msg {
-            PhysicalCarVocabulary::TelemetryUpdate(VssSignal::EngineRpm(v)) => {
-                assert_eq!(v, 4567)
-            }
-            other => panic!("unexpected rpm mapping: {other:?}"),
-        }
     }
 
     #[test]
-    fn given_ambient_lux_signal_when_mapped_then_preserves_value() {
-        let msg = vehicle_event_to_physical_vocabulary(VehicleEvent::TelemetryUpdate(
-            VssSignal::AmbientLux(33),
+    fn lifecycle_power_off_frame_maps_to_twin_ingress() {
+        let frame = LifecycleCommand::PowerOff
+            .to_can_frame()
+            .expect("encode PowerOff");
+
+        assert!(matches!(
+            can_frame_to_twin_ingress(&frame),
+            Some(TwinIngressEvent::Lifecycle(LifecycleCommand::PowerOff))
         ));
-        match msg {
-            PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(v)) => {
-                assert_eq!(v, 33)
-            }
-            other => panic!("unexpected ambient lux mapping: {other:?}"),
-        }
+    }
+
+    #[test]
+    fn engine_rpm_frame_maps_to_twin_telemetry() {
+        let frame = VssSignal::EngineRpm(4567)
+            .to_can_frame()
+            .expect("encode RPM");
+
+        assert!(matches!(
+            can_frame_to_twin_ingress(&frame),
+            Some(TwinIngressEvent::Telemetry(VssSignal::EngineRpm(4567)))
+        ));
+    }
+
+    #[test]
+    fn unknown_frame_is_not_twin_ingress() {
+        use socketcan::{CanFrame, EmbeddedFrame, StandardId};
+
+        let frame = CanFrame::new(StandardId::new(0x7ff).unwrap(), &[0; 8]).unwrap();
+        assert!(can_frame_to_twin_ingress(&frame).is_none());
     }
 }

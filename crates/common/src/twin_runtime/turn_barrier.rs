@@ -26,14 +26,14 @@ use std::time::Instant;
 use ractor::concurrency::JoinHandle;
 use ractor::MessagingErr;
 
-use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneMessage, ZoneReply};
+use crate::digital_twin::{TwinMessage, ZoneMessage, ZoneReply};
 use crate::fsm::{AssemblyId, FsmEvent};
 use crate::twin_runtime::twin_turn::ResolvedTurn;
 use crate::twin_runtime::zone_replies::ZoneReplies;
 use crate::twin_runtime::zone_tell_back::TellBackWait;
 
 /// Handle to the ractor timer task that sends `ZoneTellBackTimeout` to the brain.
-pub(crate) type TellBackTimer = JoinHandle<Result<(), MessagingErr<DigitalTwinCarVocabulary>>>;
+pub(crate) type TellBackTimer = JoinHandle<Result<(), MessagingErr<TwinMessage>>>;
 
 // ── TimeoutOutcome ────────────────────────────────────────────────────────────
 

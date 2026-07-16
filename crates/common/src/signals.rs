@@ -1,5 +1,6 @@
 use socketcan::{CanFrame, EmbeddedFrame, StandardId};
 
+pub const ID_LIFECYCLE: u16 = 0x100;
 pub const ID_SPEED: u16 = 0x101;
 pub const ID_RPM: u16 = 0x102;
 pub const ID_AMBIENT_LUX: u16 = 0x103;
@@ -7,10 +8,63 @@ pub const ID_AMBIENT_LUX: u16 = 0x103;
 /// `true` = rain detected; `false` = no rain.
 pub const ID_RAIN_DETECTED: u16 = 0x104;
 
+/// A lifecycle request decoded from an external ingress carrier.
+///
+/// Lifecycle is deliberately separate from [`VssSignal`]: powering the twin on or off is a
+/// command, not vehicle telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleCommand {
+    PowerOn,
+    PowerOff,
+}
+
+impl LifecycleCommand {
+    /// Decode the strict eight-byte lifecycle contract carried on standard CAN ID `0x100`.
+    pub fn from_can_frame(frame: &CanFrame) -> Option<Self> {
+        let socketcan::Id::Standard(id) = frame.id() else {
+            return None;
+        };
+        if id.as_raw() != ID_LIFECYCLE {
+            return None;
+        }
+
+        let data = frame.data();
+        if data.len() != 8 || data[1..].iter().any(|byte| *byte != 0) {
+            return None;
+        }
+
+        match data[0] {
+            0 => Some(Self::PowerOff),
+            1 => Some(Self::PowerOn),
+            _ => None,
+        }
+    }
+
+    /// Encode this lifecycle request as the strict eight-byte CAN `0x100` contract.
+    pub fn to_can_frame(&self) -> Result<CanFrame, socketcan::Error> {
+        let id = StandardId::new(ID_LIFECYCLE).expect("lifecycle CAN ID is a valid standard ID");
+        let opcode = match self {
+            Self::PowerOn => 1,
+            Self::PowerOff => 0,
+        };
+        CanFrame::new(id, &[opcode, 0, 0, 0, 0, 0, 0, 0]).ok_or_else(|| {
+            socketcan::Error::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "lifecycle payload must fit a classic CAN frame",
+            ))
+        })
+    }
+}
+
+/// An interpreted Vehicle Signal Specification value.
+///
+/// Today these values are decoded from CAN frames. Future KUKSA integration will interpret
+/// blueprint paths and values into this same semantic vocabulary before twin ingress. Lifecycle,
+/// control requests, and actuator feedback do not belong in this enum.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VssSignal {
     /// Vehicle.Speed (Unit: km/h, Scaling: 0.01). Decoded for future observed-speed ECUs; twin derives speed from RPM today.
-    VehicleSpeed(f64),
+    Speed(f64),
     /// Vehicle.Powertrain.CombustionEngine.Speed (Unit: rpm, Scaling: 1.0)
     EngineRpm(u16),
     /// Vehicle.Cabin or exterior ambient light sensor (Unit: lux, Scaling: 1.0)
@@ -36,7 +90,7 @@ impl VssSignal {
         match id {
             ID_SPEED => {
                 let raw = u16::from_be_bytes([data[0], data[1]]);
-                Some(Self::VehicleSpeed(raw as f64 / 100.0))
+                Some(Self::Speed(raw as f64 / 100.0))
             }
             ID_RPM => {
                 let raw = u16::from_be_bytes([data[0], data[1]]);
@@ -78,7 +132,7 @@ impl VssSignal {
         };
 
         match self {
-            Self::VehicleSpeed(val) => {
+            Self::Speed(val) => {
                 let scaled = (val * 100.0) as u16;
                 build_frame(ID_SPEED, &scaled.to_be_bytes())
             }

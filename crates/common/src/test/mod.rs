@@ -8,6 +8,9 @@
 //! - `scenarios_smoke` — lightweight end-to-end behavior smoke tests
 
 #[cfg(test)]
+mod observation_streams_contract;
+
+#[cfg(test)]
 mod actor_contract;
 
 #[cfg(test)]
@@ -36,6 +39,9 @@ mod fsm_step_contract;
 
 #[cfg(test)]
 mod lighting_step_contract;
+
+#[cfg(test)]
+mod lifecycle_signal_contract;
 
 #[cfg(test)]
 mod quiescence_actor_contract;
@@ -106,13 +112,13 @@ impl<T: ractor::Message> Drop for ActorGuard<T> {
 // The harness plays the role of the future actuation child actor: it owns the `rx` side of the
 // injected `actuation_command_tx`, asserts the outbound command, then feeds the matching
 // ack/nack back through the real physical-ingress path. No production code is involved; these
-// reuse the existing public seams (`VehicleControllerRuntimeOptions`, `submit_physical_car_event`).
+// reuse the existing public seams (`VehicleControllerRuntimeOptions`, `submit_twin_ingress`).
 
-use crate::digital_twin::DigitalTwinCarVocabulary;
+use crate::digital_twin::TwinMessage;
 use crate::fsm::{FsmEvent, FsmState};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_physics::LUX_ON_THRESHOLD;
-use crate::{ActuationCommand, PhysicalCarVocabulary, VehicleController};
+use crate::{ActuationCommand, TwinIngressEvent, VehicleController};
 use tokio::sync::mpsc;
 
 /// Power on and wait for `Idle` via the `StartAssemblies` barrier.
@@ -191,7 +197,7 @@ pub async fn install_with_actuation(
 ) -> (
     VehicleController,
     mpsc::Receiver<ActuationCommand>,
-    ActorGuard<DigitalTwinCarVocabulary>,
+    ActorGuard<TwinMessage>,
 ) {
     let (tx, rx) = mpsc::channel(capacity);
     let runtime_options = VehicleControllerRuntimeOptions {
@@ -234,17 +240,17 @@ pub async fn expect_actuation_command(
 pub async fn inject_matching_ack(controller: &VehicleController, command: &ActuationCommand) {
     let confirmed = match command {
         ActuationCommand::SwitchFrontHeadlampOn { .. } => {
-            PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: true }
+            TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true }
         }
         ActuationCommand::SwitchFrontHeadlampOff { .. } => {
-            PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: false }
+            TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: false }
         }
         ActuationCommand::StartWiper | ActuationCommand::StopWiper => {
             panic!("wiper commands have no ACK protocol; use wiper-specific test helpers")
         }
     };
     controller
-        .submit_physical_car_event(confirmed)
+        .submit_twin_ingress(confirmed)
         .await
         .expect("inject matching ack");
 }
@@ -316,17 +322,17 @@ pub async fn wait_fsm_state(
 pub async fn inject_matching_nack(controller: &VehicleController, command: &ActuationCommand) {
     let rejected = match command {
         ActuationCommand::SwitchFrontHeadlampOn { .. } => {
-            PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command: true }
+            TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true }
         }
         ActuationCommand::SwitchFrontHeadlampOff { .. } => {
-            PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command: false }
+            TwinIngressEvent::FrontHeadlampCommandRejected { on_command: false }
         }
         ActuationCommand::StartWiper | ActuationCommand::StopWiper => {
             panic!("wiper commands have no ACK protocol; use wiper-specific test helpers")
         }
     };
     controller
-        .submit_physical_car_event(rejected)
+        .submit_twin_ingress(rejected)
         .await
         .expect("inject matching nack");
 }

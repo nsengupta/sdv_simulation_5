@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneMessage, ZoneReply};
+use crate::digital_twin::{TwinMessage, ZoneMessage, ZoneReply};
 use crate::fsm::{FsmEvent, FsmState, AssemblyId};
 use crate::test::ActorGuard;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
@@ -65,7 +65,7 @@ pub async fn wait_wiper_state(
 fn inject_wiper_zone_ready(controller: &VehicleController, turn_id: u64) {
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneReady {
+        .send_message(TwinMessage::ZoneReady {
             zone_id: AssemblyId::Wiper,
             turn_id,
             tell_attempt: 0,
@@ -81,7 +81,7 @@ fn inject_headlamp_zone_ready_startup(controller: &VehicleController) {
     use crate::vehicle_state::{HeadlampContext, HeadlampState, HeadlampZoneReply};
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneReady {
+        .send_message(TwinMessage::ZoneReady {
             zone_id: AssemblyId::Headlamp,
             turn_id: HEADLAMP_STARTUP_TURN,
             tell_attempt: 0,
@@ -95,7 +95,7 @@ fn inject_headlamp_zone_ready_startup(controller: &VehicleController) {
 
 async fn spawn_non_silent(
     identity: &str,
-) -> (VehicleController, ActorGuard<DigitalTwinCarVocabulary>) {
+) -> (VehicleController, ActorGuard<TwinMessage>) {
     let (controller, handle) =
         VehicleController::install_and_start_with_options(identity.to_string(), Default::default())
             .await
@@ -109,7 +109,7 @@ async fn spawn_silent_wiper(
 ) -> (
     VehicleController,
     tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
-    ActorGuard<DigitalTwinCarVocabulary>,
+    ActorGuard<TwinMessage>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let opts = VehicleControllerRuntimeOptions {
@@ -130,7 +130,7 @@ async fn spawn_silent_both(
 ) -> (
     VehicleController,
     tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
-    ActorGuard<DigitalTwinCarVocabulary>,
+    ActorGuard<TwinMessage>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let opts = VehicleControllerRuntimeOptions {
@@ -337,7 +337,7 @@ async fn given_headlamp_then_wiper_events_when_replies_out_of_order_then_fifo_co
     use crate::vehicle_state::{HeadlampContext, HeadlampState, HeadlampZoneReply};
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneReady {
+        .send_message(TwinMessage::ZoneReady {
             zone_id: AssemblyId::Headlamp,
             turn_id: FIRST_USER_TURN,
             tell_attempt: 0,

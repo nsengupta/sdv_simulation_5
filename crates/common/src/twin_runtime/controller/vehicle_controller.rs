@@ -1,9 +1,9 @@
-use crate::digital_twin::{CarSnapshot, DigitalTwinCarVocabulary};
+use crate::digital_twin::{CarSnapshot, TwinMessage};
 use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
-use crate::twin_runtime::connectors::{PhysicalToDigitalProjector, Projector};
+use crate::twin_runtime::connectors::{IngressToFsmProjector, Projector};
 use crate::fsm::FsmEvent;
 use crate::observation_records::transition::PublishedTransitionRecord;
-use crate::PhysicalCarVocabulary;
+use crate::{LifecycleCommand, TwinIngressEvent};
 use ractor::rpc::CallResult;
 use ractor::{ActorRef, MessagingErr, SpawnErr};
 use super::virtual_car_actor::{VirtualCarActor, VirtualCarActorArgs};
@@ -11,8 +11,8 @@ use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct VehicleController {
-    actor: ActorRef<DigitalTwinCarVocabulary>,
-    projector: PhysicalToDigitalProjector,
+    actor: ActorRef<TwinMessage>,
+    projector: IngressToFsmProjector,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,40 +70,46 @@ impl VehicleController {
         Ok((Self::new(actor), handle))
     }
 
-    pub fn new(actor: ActorRef<DigitalTwinCarVocabulary>) -> Self {
+    pub fn new(actor: ActorRef<TwinMessage>) -> Self {
         Self {
             actor,
-            projector: PhysicalToDigitalProjector,
+            projector: IngressToFsmProjector,
         }
     }
 
     /// Expose the underlying actor reference for direct message access (used in tests).
-    pub fn get_actor_ref(&self) -> &ActorRef<DigitalTwinCarVocabulary> {
+    pub fn get_actor_ref(&self) -> &ActorRef<TwinMessage> {
         &self.actor
     }
 
-    /// Lifecycle: primary FSM enters powered operation (not representable as `PhysicalCarVocabulary` today).
+    /// Lifecycle: request primary FSM entry into powered operation through canonical twin ingress.
     pub async fn send_power_on(&self) -> Result<(), VehicleControllerError> {
-        self.actor
-            .send_message(FsmEvent::PowerOn.into())
-            .map_err(|e| VehicleControllerError::Messaging(format!("{e}")))?;
-        Ok(())
+        self.submit_twin_ingress(TwinIngressEvent::Lifecycle(LifecycleCommand::PowerOn))
+            .await
     }
 
     /// Lifecycle: request primary FSM shutdown to `Off` when legal (`Idle` → `Off` in current rules).
     ///
     /// From non-`Idle` powered states the FSM rejects `PowerOff` (see strategy); the message is still delivered.
     pub async fn send_power_off(&self) -> Result<(), VehicleControllerError> {
-        self.actor
-            .send_message(FsmEvent::PowerOff.into())
-            .map_err(|e| VehicleControllerError::Messaging(format!("{e}")))?;
-        Ok(())
+        self.submit_twin_ingress(TwinIngressEvent::Lifecycle(LifecycleCommand::PowerOff))
+            .await
     }
 
-    /// Public ingress path: physical car vocabulary enters via projector boundary.
-    pub async fn submit_physical_car_event(
+    /// Dashboard Park: request standstill via RPM update (typically `0` to return toward `Idle`).
+    pub async fn send_update_rpm(&self, rpm: u16) -> Result<(), VehicleControllerError> {
+        self.submit_fsm_event(FsmEvent::UpdateRpm(rpm)).await
+    }
+
+    /// Dashboard Park: zero RPM to move toward standstill / `Idle` before stop.
+    pub async fn send_park_to_idle(&self) -> Result<(), VehicleControllerError> {
+        self.send_update_rpm(0).await
+    }
+
+    /// Public ingress path: canonical external input enters through the FSM projector boundary.
+    pub async fn submit_twin_ingress(
         &self,
-        event: PhysicalCarVocabulary,
+        event: TwinIngressEvent,
     ) -> Result<(), VehicleControllerError> {
         let msg = self
             .projector
@@ -134,9 +140,9 @@ impl VehicleController {
         &self,
         timeout: Option<Duration>,
     ) -> Result<CarSnapshot, VehicleControllerError> {
-        let result: Result<CallResult<CarSnapshot>, MessagingErr<DigitalTwinCarVocabulary>> =
+        let result: Result<CallResult<CarSnapshot>, MessagingErr<TwinMessage>> =
             self.actor
-                .call(|port| DigitalTwinCarVocabulary::GetStatus(port), timeout)
+                .call(|port| TwinMessage::GetStatus(port), timeout)
                 .await;
 
         match result.map_err(|e| VehicleControllerError::Messaging(format!("{e}")))? {

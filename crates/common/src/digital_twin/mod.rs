@@ -116,7 +116,7 @@ impl DigitalTwinCar {
     }
 }
 
-/// A read-only snapshot returned by [`DigitalTwinCarVocabulary::GetStatus`].
+/// A read-only snapshot returned by [`TwinMessage::GetStatus`].
 ///
 /// Carries the twin plus `as_of_seq` — the ledger sequence (Counter A, `record_seq`) of the last
 /// FSM event this snapshot reflects. A `GetStatus` reply is never "wrong", only *as-of* a point in
@@ -154,6 +154,11 @@ impl CarSnapshot {
         self.car.current_state()
     }
 
+    /// True when the brain FSM is in [`FsmState::Idle`] (legal stop-from state).
+    pub fn is_idle(&self) -> bool {
+        matches!(self.current_state(), FsmState::Idle)
+    }
+
     /// Delegating accessor: the twin's sensor / health context.
     pub fn context(&self) -> &VehicleContext {
         self.car.context()
@@ -169,7 +174,7 @@ impl CarSnapshot {
 ///
 /// [`FsmEvent`] stays `Clone` and free of [`RpcReplyPort`]; embed domain events via [`Self::Fsm`].
 #[derive(Debug)]
-pub enum DigitalTwinCarVocabulary {
+pub enum TwinMessage {
     /// Drive the FSM (`crate::fsm::step` derives context from event payloads and computes transitions).
     Fsm(FsmEvent),
     /// Zone twinlet tell-back after applying one message.
@@ -238,31 +243,31 @@ pub enum ZoneSpontaneousEvent {
     },
 }
 
-impl From<FsmEvent> for DigitalTwinCarVocabulary {
+impl From<FsmEvent> for TwinMessage {
     fn from(evt: FsmEvent) -> Self {
         Self::Fsm(evt)
     }
 }
 
-/// Returned when a [`DigitalTwinCarVocabulary`] is not an [`FsmEvent`] wrapper.
+/// Returned when a [`TwinMessage`] is not an [`FsmEvent`] wrapper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotFsmVocabulary;
 
-impl TryFrom<DigitalTwinCarVocabulary> for FsmEvent {
+impl TryFrom<TwinMessage> for FsmEvent {
     type Error = NotFsmVocabulary;
 
-    fn try_from(value: DigitalTwinCarVocabulary) -> Result<Self, Self::Error> {
+    fn try_from(value: TwinMessage) -> Result<Self, Self::Error> {
         match value {
-            DigitalTwinCarVocabulary::Fsm(e) => Ok(e),
-            DigitalTwinCarVocabulary::GetStatus(_)
-            | DigitalTwinCarVocabulary::ZoneReady { .. }
-            | DigitalTwinCarVocabulary::ZoneSpontaneous { .. }
-            | DigitalTwinCarVocabulary::ZoneTellBackTimeout { .. } => Err(NotFsmVocabulary),
+            TwinMessage::Fsm(e) => Ok(e),
+            TwinMessage::GetStatus(_)
+            | TwinMessage::ZoneReady { .. }
+            | TwinMessage::ZoneSpontaneous { .. }
+            | TwinMessage::ZoneTellBackTimeout { .. } => Err(NotFsmVocabulary),
         }
     }
 }
 
-impl DigitalTwinCarVocabulary {
+impl TwinMessage {
     /// Borrow the inner [`FsmEvent`] when this message is [`Self::Fsm`].
     pub fn as_fsm_event(&self) -> Option<&FsmEvent> {
         match self {

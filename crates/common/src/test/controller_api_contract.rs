@@ -1,15 +1,15 @@
 //! Contract tests for async VehicleController facade APIs.
 
-use crate::digital_twin::DigitalTwinCarVocabulary;
+use crate::digital_twin::TwinMessage;
 use crate::twin_runtime::controller::virtual_car_actor::VirtualCarActor;
 use crate::fsm::{FsmEvent, FsmState};
 use crate::test::{power_off_to_off, power_on_to_idle, wait_fsm_state, ActorGuard};
-use crate::{PhysicalCarVocabulary, VehicleController};
+use crate::{TwinIngressEvent, VehicleController};
 use ractor::Actor;
 use std::time::Duration;
 
 #[tokio::test]
-async fn given_physical_car_event_when_submitted_then_controller_drives_actor_state() {
+async fn given_twin_ingress_when_submitted_then_controller_drives_actor_state() {
     let (actor, handle) = Actor::spawn(None, VirtualCarActor::default(), "CTRL-API-01".into())
         .await
         .expect("spawn actor");
@@ -23,11 +23,11 @@ async fn given_physical_car_event_when_submitted_then_controller_drives_actor_st
     power_on_to_idle(&controller).await;
     crate::test::submit_daylight_ambient(&controller).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(
             crate::VssSignal::EngineRpm(1500),
         ))
         .await
-        .expect("physical event should enqueue");
+        .expect("twin ingress should enqueue");
 
     let snapshot = controller
         .get_snapshot(Some(Duration::from_millis(250)))
@@ -53,7 +53,7 @@ async fn given_controller_when_get_snapshot_called_then_returns_readonly_snapsho
 
     let direct = actor
         .call(
-            |port| DigitalTwinCarVocabulary::GetStatus(port),
+            |port| TwinMessage::GetStatus(port),
             Some(ractor::concurrency::Duration::from_millis(250)),
         )
         .await
@@ -110,7 +110,7 @@ async fn given_applied_events_when_get_snapshot_then_as_of_seq_counts_every_even
 
     // RPM in dark (default lux=0): zone hop (seq 4) + LightingUnsafe internal hop (seq 5).
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(
             crate::VssSignal::EngineRpm(1500),
         ))
         .await

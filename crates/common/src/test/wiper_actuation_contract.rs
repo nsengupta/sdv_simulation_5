@@ -11,7 +11,7 @@ use crate::test::{
     wiper_zone_contract::wait_wiper_state,
 };
 use crate::vehicle_state::{VehicleContext, WiperState};
-use crate::{PhysicalCarVocabulary, VssSignal};
+use crate::{TwinIngressEvent, VssSignal};
 use crate::fsm::DomainAction;
 use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
 use crate::twin_runtime::controller::actuation_manager::{ActuationManager, DefaultActuationManager};
@@ -103,7 +103,7 @@ async fn given_idle_wiper_ready_when_rain_detected_true_ingress_then_running_and
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(
             VssSignal::RainDetected(true),
         ))
         .await
@@ -122,7 +122,7 @@ async fn given_wiper_running_when_rain_detected_false_ingress_then_ready_and_sto
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(
             VssSignal::RainDetected(true),
         ))
         .await
@@ -131,7 +131,7 @@ async fn given_wiper_running_when_rain_detected_false_ingress_then_ready_and_sto
     wait_wiper_state(&controller, WiperState::Running, Duration::from_millis(500)).await;
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(
             VssSignal::RainDetected(false),
         ))
         .await

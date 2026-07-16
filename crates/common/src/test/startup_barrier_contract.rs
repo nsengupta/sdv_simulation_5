@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneReply};
+use crate::digital_twin::{TwinMessage, ZoneReply};
 use crate::fsm::{FsmState, HeadlampState, AssemblyId};
 use crate::test::{power_on_to_idle, wait_fsm_state, ActorGuard};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
@@ -44,7 +44,7 @@ fn zone_reply_with_state(state: HeadlampState) -> ZoneReply {
 fn inject_zone_ready(controller: &VehicleController, turn_id: u64, state: HeadlampState) {
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneReady {
+        .send_message(TwinMessage::ZoneReady {
             zone_id: AssemblyId::Headlamp,
             turn_id,
             tell_attempt: 0,
@@ -53,7 +53,7 @@ fn inject_zone_ready(controller: &VehicleController, turn_id: u64, state: Headla
         .expect("inject_zone_ready");
 }
 
-async fn spawn_non_silent(identity: &str) -> (VehicleController, ActorGuard<DigitalTwinCarVocabulary>) {
+async fn spawn_non_silent(identity: &str) -> (VehicleController, ActorGuard<TwinMessage>) {
     let (controller, handle) =
         VehicleController::install_and_start_with_options(identity.to_string(), Default::default())
             .await
@@ -65,7 +65,7 @@ async fn spawn_non_silent(identity: &str) -> (VehicleController, ActorGuard<Digi
     (controller, guard)
 }
 
-async fn spawn_silent(identity: &str) -> (VehicleController, ActorGuard<DigitalTwinCarVocabulary>) {
+async fn spawn_silent(identity: &str) -> (VehicleController, ActorGuard<TwinMessage>) {
     let opts = VehicleControllerRuntimeOptions {
         test_silent_headlamp: true,
         ..Default::default()

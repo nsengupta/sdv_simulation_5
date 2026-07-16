@@ -1,7 +1,7 @@
-use common::{ActuationCommand, PhysicalCarVocabulary};
+use common::{ActuationCommand, TwinIngressEvent};
 
 use crate::devices::front_headlamp::codec::{
-    payload_to_physical, FrontHeadlampActuationPayload, KIND_ACK_OFF, KIND_ACK_ON, KIND_CMD_OFF,
+    payload_to_twin_ingress, FrontHeadlampActuationPayload, KIND_ACK_OFF, KIND_ACK_ON, KIND_CMD_OFF,
     KIND_CMD_ON, KIND_NACK_OFF, KIND_NACK_ON,
 };
 
@@ -15,7 +15,7 @@ struct PendingFrontHeadlampCommand {
 #[derive(Debug, Clone)]
 pub enum FrontHeadlampPolicyDecision {
     Accept {
-        physical: PhysicalCarVocabulary,
+        twin_ingress: TwinIngressEvent,
         session: u16,
         sequence: u32,
     },
@@ -69,16 +69,19 @@ impl FrontHeadlampPolicy {
             return FrontHeadlampPolicyDecision::Ignore("direction-mismatch");
         }
 
-        let Some(physical) = payload_to_physical(payload) else {
+        let Some(twin_ingress) = payload_to_twin_ingress(payload) else {
             return FrontHeadlampPolicyDecision::Ignore("non-ingress-kind");
         };
-        if is_ack != matches!(physical, PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { .. }) {
+        if is_ack != matches!(
+            twin_ingress,
+            TwinIngressEvent::FrontHeadlampCommandConfirmed { .. }
+        ) {
             return FrontHeadlampPolicyDecision::Ignore("ack-kind-mapping-mismatch");
         }
 
         self.pending = None;
         FrontHeadlampPolicyDecision::Accept {
-            physical,
+            twin_ingress,
             session: payload.session_id,
             sequence: payload.sequence_no,
         }
@@ -112,7 +115,7 @@ mod tests {
         assert!(matches!(
             decision,
             FrontHeadlampPolicyDecision::Accept {
-                physical: PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: true },
+                twin_ingress: TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true },
                 session: 0x1234,
                 sequence: 0xabcdef01
             }

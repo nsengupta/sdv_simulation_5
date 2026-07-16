@@ -2,7 +2,7 @@
 //!
 //! Scope:
 //! - Uses `VehicleController` at projection boundary.
-//! - Drives `PhysicalCarVocabulary` events directly.
+//! - Drives `TwinIngressEvent` events directly.
 //! - Verifies persisted context across all managed assemblies (headlamp, wiper, …).
 //!
 //! Non-scope:
@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use common::facade::{
-    FRONT_HEADLAMP_ON_ACK_WAIT, HeadlampState, PhysicalCarVocabulary, VehicleController,
+    FRONT_HEADLAMP_ON_ACK_WAIT, HeadlampState, TwinIngressEvent, VehicleController,
     VehicleControllerRuntimeOptions, VssSignal, WiperState,
 };
 
@@ -69,13 +69,13 @@ async fn headlamp_ack_path() {
     wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
         .expect("low lux event");
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::FrontHeadlampCommandConfirmed {
+        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandConfirmed {
             on_command: true,
         })
         .await
@@ -105,13 +105,13 @@ async fn headlamp_nack_path() {
     wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
         .expect("low lux event");
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::FrontHeadlampCommandRejected {
+        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandRejected {
             on_command: true,
         })
         .await
@@ -144,7 +144,7 @@ async fn headlamp_no_response_timeout_path() {
     wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await

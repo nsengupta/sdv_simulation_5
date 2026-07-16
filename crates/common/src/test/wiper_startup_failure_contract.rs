@@ -11,7 +11,7 @@ use crate::fsm::FsmState;
 use crate::test::{wait_fsm_state, ActorGuard};
 use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_WAIT};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
-use crate::digital_twin::DigitalTwinCarVocabulary;
+use crate::digital_twin::TwinMessage;
 use crate::VehicleController;
 
 /// Total time for one tell-back cycle to exhaust (initial + all retries).
@@ -47,7 +47,7 @@ async fn given_silent_wiper_when_startup_tell_back_exhausted_then_warning_on_dia
         VehicleController::install_and_start_with_options("WIPER-FAIL-01".to_string(), opts)
             .await
             .expect("install actor");
-    let _guard = ActorGuard::<DigitalTwinCarVocabulary> {
+    let _guard = ActorGuard::<TwinMessage> {
         addr: controller.get_actor_ref().clone(),
         handle,
     };

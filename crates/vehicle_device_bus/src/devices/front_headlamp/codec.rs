@@ -1,6 +1,6 @@
 //! Transport-agnostic front-headlamp payload codec and semantic mapping.
 
-use common::PhysicalCarVocabulary;
+use common::TwinIngressEvent;
 
 pub use crate::can::wire_kinds::{
     KIND_FRONT_HEADLAMP_ACK_OFF as KIND_ACK_OFF, KIND_FRONT_HEADLAMP_ACK_ON as KIND_ACK_ON,
@@ -34,14 +34,14 @@ pub fn decode_payload(data: &[u8]) -> Option<FrontHeadlampActuationPayload> {
     })
 }
 
-pub fn payload_to_physical(payload: FrontHeadlampActuationPayload) -> Option<PhysicalCarVocabulary> {
+pub fn payload_to_twin_ingress(payload: FrontHeadlampActuationPayload) -> Option<TwinIngressEvent> {
     match payload.kind {
-        KIND_ACK_ON => Some(PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: true }),
-        KIND_ACK_OFF => Some(PhysicalCarVocabulary::FrontHeadlampCommandConfirmed {
+        KIND_ACK_ON => Some(TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true }),
+        KIND_ACK_OFF => Some(TwinIngressEvent::FrontHeadlampCommandConfirmed {
             on_command: false,
         }),
-        KIND_NACK_ON => Some(PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command: true }),
-        KIND_NACK_OFF => Some(PhysicalCarVocabulary::FrontHeadlampCommandRejected {
+        KIND_NACK_ON => Some(TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true }),
+        KIND_NACK_OFF => Some(TwinIngressEvent::FrontHeadlampCommandRejected {
             on_command: false,
         }),
         KIND_CMD_ON | KIND_CMD_OFF => None,

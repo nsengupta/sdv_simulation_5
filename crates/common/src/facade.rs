@@ -11,10 +11,10 @@ pub use crate::twin_runtime::controller::{
     VehicleControllerRuntimeOptions,
 };
 
-// --- Physical-world ingress vocabulary ---
+// --- Canonical twin ingress vocabulary ---
 
-pub use crate::domain_types::{PhysicalCarVocabulary, VehicleEvent, VehicleState};
-pub use crate::signals::VssSignal;
+pub use crate::domain_types::{TwinIngressEvent, VehicleState};
+pub use crate::signals::{LifecycleCommand, VssSignal};
 
 // --- Read model (snapshots + observable assembly state) ---
 

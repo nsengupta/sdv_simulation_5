@@ -17,11 +17,11 @@
 pub mod diagnostic;
 pub mod transition;
 
-pub use diagnostic::{DiagnosticLevel, DiagnosticRecord};
+pub use diagnostic::{elapsed_since_session, DiagnosticLevel, DiagnosticRecord};
 pub use transition::{
     PublishedDomainAction, PublishedFrontHeadlampIncompleteCause,
     PublishedFrontHeadlampSwitchDirection, PublishedFsmEvent, PublishedFsmState,
     PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
     PublishedPowertrainContext, PublishedTransitionRecord, PublishedVehicleContext,
-    PublishedVisibilityContext, PublishedWheelRpm, SessionEpoch,
+    PublishedVisibilityContext, PublishedWheelRpm, SessionClock,
 };

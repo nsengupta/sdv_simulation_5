@@ -467,3 +467,364 @@ These items are documented in `TODO-simulation-5.md` and `brain_fsm_redesign_imp
 | Speculative FSM execution for PowerOff | Deleted (`fsm_step_lands_off`, `IgnitionOffReset`) — explicit `PreparingToStop` state instead |
 | Actuation blocking | Known risk; deferred to simulation-5 |
 | `DomainAction` as actor intent signal | FSM emits `StartAssemblies`/`StopAssemblies`; actor executes — FSM does not inspect state-transition pairs |
+
+---
+
+## 15. Time, Clocks, and Observation Streams
+
+> **Note for README / blog reuse:** session timing, gateway tick removal, stream
+> contracts, and test strategy without UI.
+
+### 15.1 `SessionClock` — the shared twin clock anchor
+
+**When initialized:** once at `VirtualCarActor` install (`SessionClock::capture()` in
+`pre_start`), before the first diagnostic or ledger emission.
+
+**What it is (not a timestamp):** a monotonic↔wall anchor pair (`started_at_instant`,
+`started_at_unix`) used to **project** monotonic [`Instant`]s into serializable wall times.
+The session **start time** is exposed separately as `session_start_unix_nanos()`.
+
+**How it is used:**
+
+| Consumer | Field(s) | Meaning |
+|---|---|---|
+| Transition ledger | `session_start_unix_nanos`, `recorded_at_unix` | Run id + when this hop committed |
+| Diagnostic log | `session_start_unix_nanos`, `recorded_at_unix` | Same pair on every driver-facing line |
+| Actuation session id | `session_start_unix_nanos()` | Correlates CAN egress with this run |
+| FSM internals | `Instant` + `clock.project(&instant)` | Monotonic inside; projected at emit boundary |
+
+Elapsed since session start (both streams):
+
+```text
+elapsed = recorded_at_unix - Duration::from_nanos(session_start_unix_nanos)
+```
+
+**Naming rationale:** avoid "epoch" for the type — that overloads Unix epoch with "session
+start moment". `SessionClock` is the projector; `session_start_unix_nanos` is the run id;
+`recorded_at_unix` is when this observation was stamped on the wall clock.
+
+**Wall-time field convention (all published types):**
+
+| Role | Rust type | Suffix | Example |
+|---|---|---|---|
+| Run id / correlation | `u128` | `_unix_nanos` | `session_start_unix_nanos` |
+| Wall-clock instant | `Duration` | `_at_unix` | `recorded_at_unix`, `entered_at_unix`, `ack_pending_since_at_unix` |
+
+Every `_at_unix` value is a [`Duration`] since [`UNIX_EPOCH`], projected through
+[`SessionClock::project`]. Names use `_at_unix` even when the meaning is “since when” —
+the suffix marks **type and coordinate system**, not “at this calendar second” only.
+
+**Intentional asymmetry on the session pair:** both fields describe time since Unix epoch,
+but they use different Rust types on purpose:
+
+- `session_start_unix_nanos` (`u128`) — compact, copyable run identifier; reused for actuation
+  correlation and serde-friendly session grouping.
+- `recorded_at_unix` (`Duration`) — supports `saturating_sub` and elapsed math without manual
+  nanos conversion at every consumer.
+
+Consumers derive elapsed as
+`recorded_at_unix - Duration::from_nanos(session_start_unix_nanos)`. Do not add a second
+`session_start_at_unix: Duration` field “for symmetry” — that duplicates the anchor and
+invites drift between two representations of the same instant.
+
+**Inside vs outside the process:** pure FSM / vehicle context keeps monotonic [`Instant`]
+fields (e.g. `ack_pending_since`, `ExtremeOperationWarning(at)`). Published ledger types
+project those at the emit boundary using the `_at_unix` suffix above. See §15.8.
+
+### 15.2 Process topology and co-located clocks
+
+**Tomorrow:** Gateway may run as a separate process (CAN ingress, actuation egress, IPC
+to observers). See [`docs/PHASES.md`](docs/PHASES.md) Phases 3–7 for capture and replay.
+
+**Today:** `VirtualCarActor`, `HeadlampActor`, and `WiperActor` run on the **same
+physical machine/OS**. Gateway and Dashboard binaries may be separate processes; the
+twin actor tree is co-located. We do **not** model clock skew between Brain and
+child assembly actors.
+
+**When Gateway splits off:** CAN and actuation become IPC. The twin runtime stays
+co-located; domain timing must **not** depend on the gateway wall clock.
+
+### 15.3 Gateway `TimerTick` removed
+
+The unconditional 100 ms gateway loop that injected `FsmEvent::TimerTick` has been
+**removed** from `TwinRuntimeBuilder::spawn_runtime`.
+
+| Concern | Owner | Status |
+|---|---|---|
+| Headlamp ACK deadline | `HeadlampActor` (`send_after` → `ZoneSpontaneous`) | Done |
+| Zone tell-back deadline | `VirtualCarActor` (`send_after`) | Done |
+| FSM cooldown (`ExtremeOperationWarning`) | Brain-owned periodic `TimerTick` while in state | **TODO** |
+| Engineer session heartbeat | Low-rate **ledger** row (not diagnostic) | **TODO** — see §15.5 |
+| Dashboard elapsed display | Derived from twin-emitted `recorded_at_unix` / session pair | Done (freezes in idle until next emit) |
+
+Gateway must **not** be the twin's heartbeat. Assembly deadlines must **not** rely on
+gateway poll (Stage III).
+
+### 15.4 Two streams, one session clock, different stories
+
+| | Transition ledger | Diagnostic log |
+|---|---|---|
+| **Audience** | Automobile / twin engineers | Driver / operator |
+| **Emits on** | Every committed FSM hop | Curated events (state change, warnings, ACKs, init) |
+| **Timing pair** | `session_start_unix_nanos` + `recorded_at_unix` | Same pair (unified via `SessionClock`) |
+| **Full story?** | Yes — event, states, contexts, actions, seq | No — human message only; not a ledger mirror |
+| **Idle** | Silent (no commits) | Silent unless something driver-relevant occurs |
+
+Ledger activity does **not** always translate to a new diagnostic. That is intentional.
+
+**Heartbeat is not on the diagnostic stream.** Engineer periodic timing belongs on the
+**ledger** (TODO), keeping driver diagnostics curated.
+
+### 15.5 TODO — engineer ledger heartbeat
+
+A low-rate twin-owned **ledger** emission (not gateway `TimerTick`, not diagnostic)
+so engineers can observe that the twin clock is still running during FSM idle, and
+to support future ingress→egress latency measurement on one engineering timeline.
+
+Candidate shape: special ledger row or tagged event with session pair only — details
+TBD. Dashboard and offline tools consume it from the transition channel.
+
+### 15.6 Testing observation streams without Dashboard
+
+Both streams are testable **entirely from the twin side** by wiring
+`VehicleControllerRuntimeOptions` with tokio mpsc receivers — no UI, no gateway tick:
+
+```rust
+let (diag_tx, mut diag_rx) = mpsc::unbounded_channel();
+let (trans_tx, mut trans_rx) = mpsc::channel(16);
+VehicleController::install_and_start_with_options(id, VehicleControllerRuntimeOptions {
+    diagnostic_tx: Some(diag_tx),
+    transition_tx: Some(trans_tx),
+    ..Default::default()
+}).await?;
+// drive with power_on_to_idle / FsmEvent; assert on rx only
+```
+
+Contract tests live in `crates/common/src/test/observation_streams_contract.rs`:
+
+- Ledger and diagnostic rows share `session_start_unix_nanos`
+- `recorded_at_unix` non-decreasing within each stream
+- `elapsed_since_session` derivable and consistent on both streams
+- Transition-only wiring still carries the session pair on every ledger row
+
+This pattern is the supported way to validate twin emission before any Dashboard or
+Gateway UI exists.
+
+### 15.7 Dashboard (consumer only)
+
+The Dashboard is a **passive consumer**: it reads whatever arrives on the diagnostic and
+transition receivers that `main()` wired during setup. It **trusts the twin completely** for
+display — session clock, FSM state, warnings, and ledger rows all come from twin emissions.
+**Elapsed time** comes from the twin-emitted pair (latest diagnostic or ledger
+`recorded_at_unix` minus session), not a local monotonic clock.
+
+After **install**, the boot diagnostic populates the status bar even before Start — see §16.
+If the twin runtime stops (process exit, dropped ingress handle), **no new emissions arrive**
+and the dashboard shows the last received data or empty panes — it does not invent state.
+
+Full application composition and lifecycle keys are §16.
+
+### 15.8 Two time axes
+
+The twin uses **two deliberate time axes**. They must not be conflated.
+
+| Axis | Representation | Where | Answers |
+|---|---|---|---|
+| **Runtime monotonic** | [`Instant`], injected `now` at actor edge | FSM, zone context, turn barrier | “Has this deadline elapsed?” “How long since warning began?” |
+| **Observable session** | [`SessionClock`] → `session_start_unix_nanos`, `recorded_at_unix` | Ledger, diagnostics, Dashboard | “Which run?” “Twin T+?” “When on the wall clock?” |
+
+**Runtime monotonic is not wall clock.** It is the host process timeline for interval logic
+inside the co-located actor tree. It is **not** “what time the machine thinks it is” in the
+calendar sense.
+
+**Observable session is not stored inside the FSM.** The FSM stores monotonic anchors;
+projection to `_at_unix` happens at the emit boundary via `SessionClock::project`.
+
+**Lifecycle events (`PowerOn`, `PowerOff`) do not re-anchor either axis.** They are FSM
+transitions into `PreparingToStart` / `PreparingToStop` (see §16). `SessionClock` is
+captured once at **install**, before Start.
+
+**Replay:** deferred to a future design note (not in scope for twin-lifecycle work).
+
+---
+
+## 16. Twin lifecycle (Install → Start → Operate → Stop → Disband)
+
+> **Note for README / blog reuse:** we do **not** model “accessory power” — dashboard
+> indicators alive on install while the car is not yet ignited. CAN frames before Start
+> are **harmless noise**; the FSM remains `Off` until `PowerOn`.
+
+### 16.0 Application composition — target vs transitional
+
+**Target (final round):** **separate processes** — Gateway owns the Digital Twin; Dashboard
+consumes observation streams; Emulator and actuators are independent CLIs on CAN (Zenoh later).
+Dashboard **embeds Emulator core** for CSV echo or TUI driver controls. Overview:
+[`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased delivery:
+[`docs/PHASES.md`](docs/PHASES.md).
+
+**Transitional (today):** **`tui_dashboard`** = one process, one `main()` — twin installed
+in-process via `TwinRuntimeBuilder` + dashboard UI. This is **Phase 0 debt** until
+[`PHASES.md` Phase 5](docs/PHASES.md#phase-5--split-gateway-and-dashboard-processes).
+The name **simulator** is reserved for a possible future umbrella binary.
+
+| Part | Target | Today (transitional) |
+|---|---|---|
+| **Digital Twin** | **`gateway` binary** only | In-process inside `tui_dashboard` |
+| **Dashboard** | Observation consumer + embedded emulator | Twin + UI in same process |
+| **Emulator** | Standalone or embedded in dashboard | Standalone `generate` only |
+| **Observation** | Versioned files + live link | Tokio MPSC in one process |
+
+**Setup call-tree** (before the dashboard loop):
+
+1. `main()` creates diagnostic and transition channels (sender + receiver ends).
+2. `TwinRuntimeBuilder::install_controller()` installs the twin and attaches the **senders**.
+3. `spawn_runtime()` starts CAN reader, dispatch loop, and actuation publishers.
+4. The dashboard loop holds the **receivers** and drains them each frame.
+
+**Lifecycle (target):** **PowerOn** / **PowerOff** arrive on **CAN `0x100`** from the
+**Emulator** (CSV script or dashboard-embedded emulator / TUI driver buttons). The dashboard
+does **not** inject lifecycle into the twin mailbox directly. Headless gateway may still
+auto-`PowerOn` for CI. Dashboard **`s`/`o`** are **transitional** until Phase 5 process split.
+
+Once **PowerOn** has been processed, the twin handles CAN ingress and emits **diagnostics**
+and **ledger** rows. The dashboard renders the latest of each — it does not poll snapshots,
+interpret FSM rules, or send vehicle commands.
+
+**While `Off` (design commitment):** the twin is **installed and ready** but **silently ignores**
+all driver-side ingress (RPM, lux, rain, …) until **PowerOn** — no ledger rows, no context
+mutation. Only **`PowerOn`** is accepted. *Not fully implemented yet* — see refactoring doc G2.
+
+**Trust boundary:** everything shown in Session / Diagnostic / Transition panes originates
+from twin emissions (plus static car identity configured at install). Rejected `PowerOff`,
+warnings, and state changes appear on the twin’s diagnostic and ledger streams; the dashboard
+does not duplicate that logic.
+
+**Ingress silence:** if the twin runtime is not running or CAN dispatch has stopped, the twin
+receives no events and emits nothing new; the dashboard faithfully shows stale or empty data.
+
+### 16.1 Session scope
+
+**One application run → one twin session → one `SessionClock`.**
+
+| Milestone | What happens |
+|---|---|
+| **Install** | `install_controller()` spawns actor tree; `SessionClock::capture()`; boot diagnostic; FSM `Off` |
+| **Start** | **PowerOn** via CAN (emulator) or transitional dashboard **`s`** / headless auto-start → `PreparingToStart` → … → `Idle` |
+| **Operate** | Emulators / actuators on CAN; twin processes ingress |
+| **Stop** | **PowerOff** via CAN when twin is **`Idle`**, or transitional **`o`** → `PreparingToStop` → `Off` |
+| **Disband** | Actor tree and ingress workers torn down; session ends |
+| **New twin** | Requires **restarting the application** — no in-process reinstall |
+
+`PowerOn` / `PowerOff` are **lifecycle FSM events** (future CAN `0x100` may map to them).
+They are **not** clock anchors and must not re-capture `SessionClock`.
+
+`PowerOn` / `PowerOff` are **lifecycle FSM events** (CAN ID `0x100` — see
+`docs/TODO-simulation-5.md` §1). They are **not** clock anchors and must not re-capture
+`SessionClock`.
+
+### 16.2 Dashboard (driver + engineer)
+
+The Dashboard is a **faithful observer** of twin diagnostic and ledger streams. In the **target**
+architecture it is also the **driver console**: TUI buttons (PowerOn, PowerOff, Drive, Park, …)
+instruct the **embedded Emulator core**, which emits CAN frames — not direct twin FSM calls.
+Vehicle physics and actuation still flow **emulators + actuators → CAN → Gateway**.
+
+**Engineer panes:** latest diagnostic and transition ledger (trust boundary unchanged).
+
+**Operating modes (target):** see [`docs/ARCHITECTURE-OVERVIEW.md` §1.2](docs/ARCHITECTURE-OVERVIEW.md#12-dashboard-operating-modes-target).
+
+Dashboard keys **`s`/`o`** exist **transitionally** in the combined app today.
+
+**Layout** (`tui_dashboard`):
+
+```text
+┌─ Session ─────────────────────────────────────────────────────┐
+│ Car: …  │  Twin T+: …  │  Session start  │  FSM: …  │  ledger │
+└───────────────────────────────────────────────────────────────┘
+┌─ Diagnostic ──────────────┬─ Transition ──────────────────────┐
+│ (latest twin diagnostic)  │ (latest twin ledger row)          │
+└───────────────────────────┴───────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ Keys: 'q' quit  ('s'/'o' transitional — prefer emulator CAN)  │
+└───────────────────────────────────────────────────────────────┘
+```
+
+Before the **first post-PowerOn ledger row**, panes show a short install placeholder; the
+Session row still reflects the boot diagnostic from the twin.
+
+**Target flow:**
+
+```text
+App launch (tui_dashboard main)
+  → setup: channels + TwinRuntimeBuilder::install + spawn_runtime
+  → Dashboard loop drains receivers (twin Off — ingress silently ignored)
+  → actuators on vcan0
+  → emulator echo: PowerOn → sensor rows → standstill → PowerOff (all via CAN)
+  → [q] quit → see §16.6
+```
+
+**Stop from non-`Idle`:** the twin **rejects** `PowerOff` and records it on ledger +
+diagnostic. Reach **`Idle` via CAN / emulators** before a successful stop.
+
+### 16.3 CAN before Start — silent ignore while `Off`
+
+We **do not** emulate a real vehicle where the battery powers the dashboard but ignition
+is off. The twin is **created and ready** (like an ECU waiting for ignition) but **does not
+respond to driver input until PowerOn**:
+
+- CAN reader may be running after install (implementation detail).
+- While FSM is **`Off`**, ingress frames are **silently ignored** — no ledger, no context
+  change, no “partially on” semantics. Only **`PowerOn`** is handled.
+- **Target:** emulator sends PowerOn on CAN when the scenario starts; actuators before emulator.
+
+*Implemented in Phase 1:* `VirtualCarActor` drops every non-`PowerOn` FSM event while `Off`
+before turn allocation, so pre-Start CAN cannot mutate context, contact zones, or emit ledger
+traffic. See [`docs/PHASES.md` Phase 1](docs/PHASES.md#phase-1--can-lifecycle--silent-ignore-while-off).
+
+**Operator-facing detail:** [`README.md` — Dashboard app and twin lifecycle](README.md#dashboard-app-and-twin-lifecycle).
+
+### 16.4 Runtime split (design commitment)
+
+**Target:** Gateway process owns install, ingress workers, and observation export. Dashboard
+process owns UI + embedded emulator; **no** in-process twin. Inter-process observation uses
+file tail or simple IPC first ([`PHASES.md` Phase 5](docs/PHASES.md)); Zenoh/uProtocol is
+[`PHASES.md` Phase 8](docs/PHASES.md).
+
+`TwinRuntimeBuilder` (Gateway-side) separates:
+
+1. **Install** — actor tree + channels + `SessionClock`.
+2. **Ingress workers** — CAN reader + dispatch loop.
+3. **Start / Stop** — via CAN lifecycle from Emulator (not dashboard → twin direct calls).
+
+**Observation capture:** human-readable diagnostic + ledger files with run-id and schema version
+([`PHASES.md` Phase 3](docs/PHASES.md)). **Replay:** dashboard standalone from stored files
+([`PHASES.md` Phase 7](docs/PHASES.md)).
+
+**Disband on Stop** — [`PHASES.md` Phase 9](docs/PHASES.md) / [`TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) TL-6/7.
+
+### 16.5 Gateway vs Dashboard
+
+| Mode | Twin location | Start trigger | Use |
+|---|---|---|---|
+| **Target — Gateway** | Gateway process | Emulator CAN `0x100` | Production twin host |
+| **Target — Dashboard** | None (observation only) | Embedded emulator / CSV | Driver + engineer TUI |
+| **Target — Replay** | None | N/A (stored observation) | Reproducibility |
+| **Today — `tui_dashboard`** | In-process | Transitional **`s`** / emulator | Development convenience |
+| **Gateway headless** | Gateway process | Opt-in `auto_power_on` | CI / scripts |
+
+Implementation tasks: `docs/TODO-twin-lifecycle.md`.
+
+### 16.6 Quit (`q`) — current limitation
+
+Today, **`q` / Esc ends the dashboard loop and exits the process**. That drops the runtime
+`JoinHandle` from `spawn_runtime()`, which **stops CAN ingress and tears down the twin
+workers** as a side effect of process exit — even though the dashboard itself is only a
+display layer.
+
+This is a **convenience coupling**, not the long-term architecture:
+
+- **Target (TL-6):** quit should run an explicit Stop / disband sequence when needed; emulators
+  and actuators may keep running on `vcan0` independently.
+- **Today:** quitting stops both the TUI and the in-process Digital Twin together.
+
+Emulators and actuators in other terminals are unaffected by dashboard quit.

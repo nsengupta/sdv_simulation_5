@@ -1,4 +1,4 @@
-use crate::signals::VssSignal;
+use crate::signals::{LifecycleCommand, VssSignal};
 pub use crate::vehicle_physics::{
     RPM_EXTREME_OPERATION_THRESHOLD, RPM_IDLE, RPM_REDLINE_THRESHOLD,
     RPM_STRESS_DURATION_THRESHOLD_SECS, SPEED_EXTREME_OPERATION_THRESHOLD_KPH,
@@ -31,28 +31,25 @@ impl Default for VehicleState {
     }
 }
 
+/// Canonical transport-independent input accepted by the twin.
+///
+/// Gateway decoders and other external adapters construct this vocabulary after validating their
+/// carrier-specific payloads. [`crate::twin_runtime::connectors::IngressToFsmProjector`] then
+/// translates it into the state-machine vocabulary. Actor-internal coordination messages do not
+/// belong here.
 #[derive(Debug, Clone)]
-pub enum VehicleEvent {
-    /// Data received from the Ingress Bus
-    TelemetryUpdate(VssSignal),
-    /// A system-generated heartbeat or check
+pub enum TwinIngressEvent {
+    /// Request a primary twin lifecycle transition.
+    Lifecycle(LifecycleCommand),
+    /// An interpreted VSS telemetry value received from an ingress carrier.
+    Telemetry(VssSignal),
+    /// A system-generated heartbeat or check.
     TimerTick,
-    /// Emergency stop or system reset
-    SystemReset,
-}
-
-/// Canonical physical-side vocabulary consumed by projection adapters.
-#[derive(Debug, Clone)]
-pub enum PhysicalCarVocabulary {
-    /// Data received from the Ingress Bus
-    TelemetryUpdate(VssSignal),
-    /// A system-generated heartbeat or check
-    TimerTick,
-    /// Emergency stop or system reset
+    /// Emergency stop or system reset.
     SystemReset,
     /// Actuator completed the command (ingress: CAN ACK decoded at gateway).
     ///
-    /// Outside/physical vocabulary uses **Confirmed/Rejected**; projection maps to
+    /// External actuator feedback uses **Confirmed/Rejected**; projection maps to
     /// [`crate::fsm::FsmEvent::FrontHeadlampOnAck`] / `OffAck`. `on_command = true` → ON path.
     FrontHeadlampCommandConfirmed { on_command: bool },
     /// Actuator rejected the command (ingress: CAN NACK decoded at gateway).

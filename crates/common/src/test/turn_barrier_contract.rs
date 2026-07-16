@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
-use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneReply};
+use crate::digital_twin::{TwinMessage, ZoneReply};
 use crate::fsm::{FsmEvent, FsmState, HeadlampState, AssemblyId};
 use crate::observation_records::transition::{PublishedDomainAction, PublishedTransitionRecord};
 use crate::test::ActorGuard;
@@ -84,7 +84,7 @@ async fn assert_no_row(rx: &mut mpsc::Receiver<PublishedTransitionRecord>, windo
 fn inject_zone_ready(controller: &VehicleController, turn_id: u64, state: HeadlampState) {
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneReady {
+        .send_message(TwinMessage::ZoneReady {
             zone_id: AssemblyId::Headlamp,
             turn_id,
             tell_attempt: 0,
@@ -96,7 +96,7 @@ fn inject_zone_ready(controller: &VehicleController, turn_id: u64, state: Headla
 fn inject_timeout(controller: &VehicleController, turn_id: u64, attempt: u32) {
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneTellBackTimeout {
+        .send_message(TwinMessage::ZoneTellBackTimeout {
             zone_id: AssemblyId::Headlamp,
             turn_id,
             tell_attempt: attempt,
@@ -115,7 +115,7 @@ async fn spawn_silent(
 ) -> (
     VehicleController,
     mpsc::Receiver<PublishedTransitionRecord>,
-    ActorGuard<DigitalTwinCarVocabulary>,
+    ActorGuard<TwinMessage>,
 ) {
     let (tx, rx) = mpsc::channel(32);
     let opts = VehicleControllerRuntimeOptions {

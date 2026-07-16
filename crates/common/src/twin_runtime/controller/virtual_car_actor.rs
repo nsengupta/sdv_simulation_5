@@ -2,9 +2,9 @@
 //!
 //! ## Message layering
 //! - **[`FsmEvent`](crate::fsm::FsmEvent)** — pure FSM vocabulary: `Clone`, no I/O ports.
-//! - **[`DigitalTwinCarVocabulary`](crate::digital_twin::DigitalTwinCarVocabulary)** — full mailbox:
-//!   wraps [`FsmEvent`](crate::fsm::FsmEvent) via [`DigitalTwinCarVocabulary::Fsm`] plus
-//!   request/reply such as [`DigitalTwinCarVocabulary::GetStatus`] ([`RpcReplyPort`]).
+//! - **[`TwinMessage`](crate::digital_twin::TwinMessage)** — full mailbox:
+//!   wraps [`FsmEvent`](crate::fsm::FsmEvent) via [`TwinMessage::Fsm`] plus
+//!   request/reply such as [`TwinMessage::GetStatus`] ([`RpcReplyPort`]).
 //!
 //! ## Phase 4 — reorder buffer
 //!
@@ -34,7 +34,7 @@ use crate::observation_records::diagnostic::sink::{
     diag_front_headlamp_confirmed, diag_state_transition, diag_timer_tick, diag_warning,
     diag_transition_sink_full, diag_transition_sink_closed,
 };
-use crate::digital_twin::{CarSnapshot, DigitalTwinCar, DigitalTwinCarVocabulary, ZoneMessage, ZoneReply};
+use crate::digital_twin::{CarSnapshot, DigitalTwinCar, TwinMessage, ZoneMessage, ZoneReply};
 use crate::twin_runtime::constants::ZONE_TELL_BACK_WAIT;
 use crate::twin_runtime::controller::actuation_manager::{
     ActuationManager, DefaultActuationManager,
@@ -59,7 +59,7 @@ use crate::twin_runtime::turn_barrier::{
     BarrierEntry, PassthroughBarrier, TellBackTimer, TimeoutOutcome, TurnBarrier,
 };
 use crate::vehicle_state::{HeadlampMessage, WiperMessage, VehicleContext};
-use crate::observation_records::transition::{PublishedTransitionRecord, SessionEpoch};
+use crate::observation_records::transition::{PublishedTransitionRecord, SessionClock};
 use crate::observation_records::transition::sink::{
     TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
 };
@@ -96,7 +96,7 @@ pub struct VirtualCarRuntimeState {
     wiper_actor: ActorRef<WiperActorMsg>,
     /// Stable self-reference used to arm timers and send `ZoneTellBackTimeout` messages.
     /// Captured in `pre_start` via `myself.clone()`; idiomatic actor self-ref pattern.
-    self_ref: ActorRef<DigitalTwinCarVocabulary>,
+    self_ref: ActorRef<TwinMessage>,
     next_turn_id: u64,
     /// Reorder-buffer: every in-flight FSM turn occupies one slot.
     /// The drain loop commits from the front in strict arrival order.
@@ -104,7 +104,7 @@ pub struct VirtualCarRuntimeState {
     next_record_seq: u64,
     /// Monotonic↔wall anchor for this run; the sole source of wall-clock stamps on published
     /// records and of the actuation `session_id`.
-    session_epoch: SessionEpoch,
+    session_clock: SessionClock,
     runtime_options: VehicleControllerRuntimeOptions,
     actuation_manager: Arc<dyn ActuationManager>,
     diagnostic_sink: Option<Arc<dyn DiagnosticSink>>,
@@ -138,7 +138,7 @@ impl VirtualCarActor {
 
 #[async_trait]
 impl Actor for VirtualCarActor {
-    type Msg = DigitalTwinCarVocabulary;
+    type Msg = TwinMessage;
     type State = VirtualCarRuntimeState;
     type Arguments = VirtualCarActorArgs;
 
@@ -161,18 +161,19 @@ impl Actor for VirtualCarActor {
             .clone()
             .map(|tx| Arc::new(TokioMpscTransitionRecordSink::new(tx)) as Arc<dyn TransitionRecordSink>);
 
+        let session_clock = SessionClock::capture();
+
         if let Some(sink) = &diagnostic_sink {
             let _ = sink.try_emit(DiagnosticRecord::info(
+                &session_clock,
                 "VirtualCarActor",
                 format!("Physical Car name: {identity}, initializing its Digital Twin ..."),
             ));
         }
 
-        let session_epoch = SessionEpoch::capture();
-
         let actuation_manager: Arc<dyn ActuationManager> =
             if let Some(tx) = args.runtime_options.actuation_command_tx.clone() {
-                let session_id = session_epoch.session_id_nanos() as u64;
+                let session_id = session_clock.session_start_unix_nanos() as u64;
                 let manager = DefaultActuationManager::with_command_channel(
                     identity.clone(),
                     session_id,
@@ -203,7 +204,7 @@ impl Actor for VirtualCarActor {
             next_turn_id: 1,
             barrier_queue: VecDeque::new(),
             next_record_seq: 1,
-            session_epoch,
+            session_clock,
             runtime_options: args.runtime_options,
             actuation_manager,
             diagnostic_sink,
@@ -221,13 +222,21 @@ impl Actor for VirtualCarActor {
         message: Self::Msg,
         runtime_state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
-        use DigitalTwinCarVocabulary::{Fsm, GetStatus, ZoneReady, ZoneSpontaneous, ZoneTellBackTimeout};
+        use TwinMessage::{Fsm, GetStatus, ZoneReady, ZoneSpontaneous, ZoneTellBackTimeout};
 
         match message {
             Fsm(evt_arrived) => {
+                if matches!(runtime_state.twin_car.current_state(), FsmState::Off)
+                    && !matches!(evt_arrived, FsmEvent::PowerOn)
+                {
+                    return Ok(());
+                }
                 if matches!(evt_arrived, FsmEvent::TimerTick) && runtime_state.runtime_options.log_timer_tick {
                     if let Some(sink) = &runtime_state.diagnostic_sink {
-                        let _ = sink.try_emit(diag_timer_tick(runtime_state.twin_car.identity()));
+                        let _ = sink.try_emit(diag_timer_tick(
+                            &runtime_state.session_clock,
+                            runtime_state.twin_car.identity(),
+                        ));
                     }
                 }
                 let now = Instant::now();
@@ -299,7 +308,7 @@ impl VirtualCarActor {
 
     fn tell_zone(
         runtime_state: &VirtualCarRuntimeState,
-        brain: &ActorRef<DigitalTwinCarVocabulary>,
+        brain: &ActorRef<TwinMessage>,
         _assembly_id: AssemblyId,
         message: &ZoneMessage,
         turn_id: u64,
@@ -330,14 +339,14 @@ impl VirtualCarActor {
     // ── timer helper ──────────────────────────────────────────────────────────
 
     fn arm_tell_back_timer(
-        brain: &ActorRef<DigitalTwinCarVocabulary>,
+        brain: &ActorRef<TwinMessage>,
         zone_id: AssemblyId,
         turn_id: u64,
         tell_attempt: u32,
     ) -> TellBackTimer {
         brain.send_after(
             RactorDuration::from(ZONE_TELL_BACK_WAIT),
-            move || DigitalTwinCarVocabulary::ZoneTellBackTimeout {
+            move || TwinMessage::ZoneTellBackTimeout {
                 zone_id,
                 turn_id,
                 tell_attempt,
@@ -361,7 +370,7 @@ impl VirtualCarActor {
     ///    This covers events with no zone mapping (e.g. `PowerOn`, `TimerTick`) AND
     ///    user events arriving during `PreparingToStart` or `PreparingToStop`.
     async fn begin_fsm_turn(
-        brain: &ActorRef<DigitalTwinCarVocabulary>,
+        brain: &ActorRef<TwinMessage>,
         runtime_state: &mut VirtualCarRuntimeState,
         event: FsmEvent,
         now: Instant,
@@ -422,7 +431,7 @@ impl VirtualCarActor {
     ///
     /// Validates the attempt, decides retry vs. give-up, re-tells or synthesises a reply.
     async fn on_zone_timeout(
-        brain: &ActorRef<DigitalTwinCarVocabulary>,
+        brain: &ActorRef<TwinMessage>,
         runtime_state: &mut VirtualCarRuntimeState,
         zone_id: AssemblyId,
         turn_id: u64,
@@ -573,6 +582,7 @@ impl VirtualCarActor {
                 DomainAction::LogWarning(message) => {
                     if let Some(sink) = &runtime_state.diagnostic_sink {
                         let _ = sink.try_emit(diag_warning(
+                            &runtime_state.session_clock,
                             runtime_state.twin_car.identity(),
                             &message,
                         ));
@@ -612,6 +622,7 @@ impl VirtualCarActor {
                     {
                         if let Some(sink) = &runtime_state.diagnostic_sink {
                             let _ = sink.try_emit(diag_actuation_failure(
+                                &runtime_state.session_clock,
                                 runtime_state.twin_car.identity(),
                                 &format!("{:?}", other_action),
                                 &format!("{:?}", err),
@@ -625,6 +636,7 @@ impl VirtualCarActor {
         if *runtime_state.twin_car.current_state() != old_state {
             if let Some(sink) = &runtime_state.diagnostic_sink {
                 let _ = sink.try_emit(diag_state_transition(
+                    &runtime_state.session_clock,
                     runtime_state.twin_car.identity(),
                     runtime_state.twin_car.current_state(),
                     runtime_state.twin_car.context(),
@@ -635,6 +647,7 @@ impl VirtualCarActor {
         if let Some(direction) = front_headlamp_confirmed_direction(headlamp_before, headlamp_after) {
             if let Some(sink) = &runtime_state.diagnostic_sink {
                 let _ = sink.try_emit(diag_front_headlamp_confirmed(
+                    &runtime_state.session_clock,
                     runtime_state.twin_car.identity(),
                     direction,
                 ));
@@ -657,7 +670,7 @@ impl VirtualCarActor {
             &transition_record,
             runtime_state.twin_car.identity(),
             record_seq,
-            &runtime_state.session_epoch,
+            &runtime_state.session_clock,
         );
 
         if let Err(err) = sink.try_emit(published) {
@@ -665,12 +678,18 @@ impl VirtualCarActor {
             match err {
                 TransitionSinkError::Full => {
                     if let Some(sink) = diag_sink {
-                        let _ = sink.try_emit(diag_transition_sink_full(runtime_state.twin_car.identity()));
+                        let _ = sink.try_emit(diag_transition_sink_full(
+                            &runtime_state.session_clock,
+                            runtime_state.twin_car.identity(),
+                        ));
                     }
                 }
                 TransitionSinkError::Closed => {
                     if let Some(sink) = diag_sink {
-                        let _ = sink.try_emit(diag_transition_sink_closed(runtime_state.twin_car.identity()));
+                        let _ = sink.try_emit(diag_transition_sink_closed(
+                            &runtime_state.session_clock,
+                            runtime_state.twin_car.identity(),
+                        ));
                     }
                 }
             }

@@ -1,19 +1,108 @@
 //! Actor-oriented contract tests (mailbox -> step -> persistence/emit sequencing).
 
-use crate::digital_twin::DigitalTwinCarVocabulary;
+use crate::digital_twin::TwinMessage;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
-use crate::fsm::{FsmEvent, HeadlampState};
+use crate::fsm::{FsmEvent, FsmState, HeadlampState};
 use crate::{PublishedFsmEvent, PublishedFsmState};
 use crate::test::{
     expect_actuation_command, inject_matching_ack, inject_matching_nack,
     power_on_to_idle, ActorGuard,
 };
-use crate::{ActuationCommand, PhysicalCarVocabulary, VehicleController, VssSignal};
+use crate::vehicle_state::VehicleContext;
+use crate::{ActuationCommand, TwinIngressEvent, VehicleController, VssSignal};
 use ractor::concurrency::Duration;
 use tokio::sync::mpsc;
 
 /// Timeout for actor call in contract tests.
 const DEFAULT_ACTOR_TIMEOUT: Duration = Duration::from_millis(250);
+
+#[tokio::test]
+async fn off_silently_ignores_rpm_and_lux_without_observable_or_context_changes() {
+    let (transition_tx, mut transition_rx) = mpsc::channel(8);
+    let (diagnostic_tx, mut diagnostic_rx) = mpsc::unbounded_channel();
+    let (actuation_tx, mut actuation_rx) = mpsc::channel(8);
+    let runtime_options = VehicleControllerRuntimeOptions {
+        transition_tx: Some(transition_tx),
+        diagnostic_tx: Some(diagnostic_tx),
+        actuation_command_tx: Some(actuation_tx),
+        ..VehicleControllerRuntimeOptions::default()
+    };
+    let (controller, handle) = VehicleController::install_and_start_with_options(
+        "OFF-SILENT-TELEMETRY".to_string(),
+        runtime_options,
+    )
+    .await
+    .expect("install twin");
+    let _guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
+    while diagnostic_rx.try_recv().is_ok() {}
+
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::EngineRpm(1800)))
+        .await
+        .expect("submit RPM");
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(7)))
+        .await
+        .expect("submit lux");
+
+    let snapshot = controller
+        .get_snapshot(Some(DEFAULT_ACTOR_TIMEOUT))
+        .await
+        .expect("snapshot after ignored telemetry");
+    assert_eq!(*snapshot.current_state(), FsmState::Off);
+    assert_eq!(snapshot.as_of_seq(), 0);
+    assert_eq!(snapshot.context(), &VehicleContext::default());
+    assert!(transition_rx.try_recv().is_err());
+    assert!(diagnostic_rx.try_recv().is_err());
+    assert!(actuation_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn power_off_while_off_is_silent_then_power_on_starts_normally() {
+    let (transition_tx, mut transition_rx) = mpsc::channel(8);
+    let (diagnostic_tx, mut diagnostic_rx) = mpsc::unbounded_channel();
+    let runtime_options = VehicleControllerRuntimeOptions {
+        transition_tx: Some(transition_tx),
+        diagnostic_tx: Some(diagnostic_tx),
+        ..VehicleControllerRuntimeOptions::default()
+    };
+    let (controller, handle) = VehicleController::install_and_start_with_options(
+        "OFF-SILENT-POWER-OFF".to_string(),
+        runtime_options,
+    )
+    .await
+    .expect("install twin");
+    let _guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
+    while diagnostic_rx.try_recv().is_ok() {}
+
+    controller.send_power_off().await.expect("submit PowerOff");
+    let snapshot = controller
+        .get_snapshot(Some(DEFAULT_ACTOR_TIMEOUT))
+        .await
+        .expect("snapshot after ignored PowerOff");
+    assert_eq!(*snapshot.current_state(), FsmState::Off);
+    assert_eq!(snapshot.as_of_seq(), 0);
+    assert!(transition_rx.try_recv().is_err());
+    assert!(diagnostic_rx.try_recv().is_err());
+
+    controller.send_power_on().await.expect("submit PowerOn");
+    let first_transition = tokio::time::timeout(DEFAULT_ACTOR_TIMEOUT, transition_rx.recv())
+        .await
+        .expect("PowerOn transition timeout")
+        .expect("transition channel closed");
+    assert_eq!(first_transition.event, PublishedFsmEvent::PowerOn);
+    assert_eq!(first_transition.old_state, PublishedFsmState::Off);
+    assert_eq!(
+        first_transition.next_state,
+        PublishedFsmState::PreparingToStart
+    );
+}
 
 #[tokio::test]
 async fn scenario_raw_transition_records_are_emitted_in_order() {
@@ -81,12 +170,12 @@ async fn scenario_raw_transition_records_are_emitted_in_order() {
     assert_eq!(row5.current_ctx.powertrain.wheel_rpm.front_left, 1500);
 
     // All records share one run (session epoch) and advance monotonically in wall time.
-    assert_eq!(row1.session_epoch_unix_nanos, row5.session_epoch_unix_nanos);
-    assert!(row5.at_unix >= row1.at_unix);
+    assert_eq!(row1.session_start_unix_nanos, row5.session_start_unix_nanos);
+    assert!(row5.recorded_at_unix >= row1.recorded_at_unix);
 
     let twin_snapshot = actor_ref
         .call(
-            |port| DigitalTwinCarVocabulary::GetStatus(port),
+            |port| TwinMessage::GetStatus(port),
             Some(DEFAULT_ACTOR_TIMEOUT),
         )
         .await
@@ -179,7 +268,7 @@ async fn scenario_actuation_ack_round_trip_via_helper() {
     // Phase 1: bridge to Idle before sending lux (lux in PreparingToStart is a no-op).
     power_on_to_idle(&controller).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
@@ -231,13 +320,13 @@ async fn scenario_actuation_ack_surfaces_confirmation_on_diagnostic_sink() {
     // Phase 1: bridge to Idle before sending lux.
     power_on_to_idle(&controller).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
         .expect("low lux event requests headlamp ON");
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::FrontHeadlampCommandConfirmed {
+        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandConfirmed {
             on_command: true,
         })
         .await
@@ -278,7 +367,7 @@ async fn scenario_actuation_nack_round_trip_via_helper() {
     // Phase 1: bridge to Idle before sending lux.
     power_on_to_idle(&controller).await;
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await

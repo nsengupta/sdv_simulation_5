@@ -7,7 +7,7 @@ Detailed design notes for each item live in `brain_fsm_redesign_impl_Phase_10.md
 
 ## 1. CAN emulation for `PowerOn` / `PowerOff`
 
-**Status:** Not started.  
+**Status:** Gateway codec and twin ingress implemented in **[`PHASES.md` Phase 1](PHASES.md#phase-1--can-lifecycle--silent-ignore-while-off)**; manual `vcan0` smoke pending.  
 **Reference:** `brain_fsm_redesign_impl_Phase_10.md` Item C; `analysis_4_response.md` Stage 1.
 
 `PowerOn` and `PowerOff` events are currently injected programmatically.
@@ -18,7 +18,9 @@ Map real CAN frames to FSM events:
 | `0x100` | `01 00 00 00 00 00 00 00` | `FsmEvent::PowerOn`  |
 | `0x100` | `00 00 00 00 00 00 00 00` | `FsmEvent::PowerOff` |
 
-Implement in a new `can_emulator` module (function first, actor if gateway integration requires it).
+The gateway now decodes this strict eight-byte contract into
+`TwinIngressEvent::Lifecycle(LifecycleCommand)`. Emulator transmission belongs to
+[`PHASES.md` Phase 2](PHASES.md#phase-2--emulator-scenario-runner-echo--generate).
 
 ---
 

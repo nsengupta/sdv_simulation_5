@@ -26,17 +26,17 @@ pub mod facade;
 mod test;
 
 pub use digital_twin::{
-    verify_state_laws, CarSnapshot, DigitalTwinCar, DigitalTwinCarError, DigitalTwinCarVocabulary,
+    verify_state_laws, CarSnapshot, DigitalTwinCar, DigitalTwinCarError, TwinMessage,
     LawViolation, NotFsmVocabulary, StateLaw, STATE_LAWS,
 };
-pub use domain_types::{PhysicalCarVocabulary, VehicleEvent, VehicleState};
-pub use twin_runtime::connectors::{PhysicalToDigitalProjector, Projector, ProjectionError};
+pub use domain_types::{TwinIngressEvent, VehicleState};
+pub use twin_runtime::connectors::{IngressToFsmProjector, Projector, ProjectionError};
 pub use twin_runtime::controller::{
     ActuationCommand, ActuationError, ActuationFeedback, ActuationManager, CorrelationId,
     DefaultActuationManager, VehicleController, VehicleControllerError,
     VehicleControllerRuntimeOptions,
 };
-pub use signals::VssSignal;
+pub use signals::{LifecycleCommand, VssSignal};
 pub use front_headlamp_log::{
     ACK_OFF, ACK_ON, CMD_OFF, CMD_ON, MSG_ACK_OFF, MSG_ACK_ON, MSG_NACK_OFF, MSG_NACK_ON,
     MSG_REQUEST_OFF, MSG_REQUEST_ON, MSG_TIMEOUT_OFF, MSG_TIMEOUT_ON, NACK_OFF, NACK_ON,
@@ -51,11 +51,11 @@ pub use vehicle_physics::{
     SPEED_THRESHOLD_WARNING_MESSAGE,
 };
 pub use observation_records::{
-    DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
+    elapsed_since_session, DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
     PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
     PublishedHealthContext, PublishedPowertrainContext, PublishedTransitionRecord,
-    PublishedVehicleContext, PublishedVisibilityContext, PublishedWheelRpm, SessionEpoch,
+    PublishedVehicleContext, PublishedVisibilityContext, PublishedWheelRpm, SessionClock,
 };
 pub use observation_records::diagnostic::sink::{
     DiagnosticSink, DiagnosticSinkError, TokioMpscDiagnosticSink, diag_actuation_failure,

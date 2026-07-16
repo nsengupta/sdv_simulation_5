@@ -4,3 +4,4 @@
 pub mod gateway_runtime;
 pub mod ingress;
 pub mod transition_log;
+pub mod twin_lifecycle;

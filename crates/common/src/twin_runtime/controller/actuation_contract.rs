@@ -8,7 +8,7 @@
 //! | Layer | Types | Terms | Role |
 //! |-------|--------|-------|------|
 //! | **Actor / controller runtime** | [`ActuationCommand`], [`ActuationFeedback`], [`FsmEvent`] | **ACK / NACK** | What the twin and actuation port speak |
-//! | **Physical ingress** ([`PhysicalCarVocabulary`]) | `FrontHeadlampCommandConfirmed`, `FrontHeadlampCommandRejected` | **Confirmed / Rejected** | Bus decode → semantic outcome before projection |
+//! | **Physical ingress** ([`TwinIngressEvent`]) | `FrontHeadlampCommandConfirmed`, `FrontHeadlampCommandRejected` | **Confirmed / Rejected** | Bus decode → semantic outcome before projection |
 //!
 //! [`ActuationFeedback`] is **actor-side**: correlated responses on the actuation port
 //! (future channel or child-actor path). Gateway CAN ingress today maps wire ACK/NACK into

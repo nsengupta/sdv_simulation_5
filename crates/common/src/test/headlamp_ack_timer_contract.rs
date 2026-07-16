@@ -1,5 +1,5 @@
 //! Item 2 — headlamp twinlet owns ACK wait via ractor `send_after`; brain commits on
-//! [`DigitalTwinCarVocabulary::HeadlampZoneSpontaneous`], not gateway `TimerTick`.
+//! [`TwinMessage::HeadlampZoneSpontaneous`], not gateway `TimerTick`.
 
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ use crate::observation_records::transition::{
 use crate::test::{power_on_to_idle, submit_daylight_ambient, wait_fsm_state, wait_headlamp_state, ActorGuard};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_physics::{FRONT_HEADLAMP_ON_ACK_WAIT, RPM_DRIVING_THRESHOLD};
-use crate::{PhysicalCarVocabulary, VehicleController, VssSignal};
+use crate::{TwinIngressEvent, VehicleController, VssSignal};
 use tokio::sync::mpsc;
 
 #[tokio::test]
@@ -49,7 +49,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_th
     let _ = rx.recv().await.expect("rpm row");
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
@@ -124,7 +124,7 @@ async fn given_actor_on_requested_when_ack_before_deadline_then_no_spontaneous_i
     let _ = rx.recv().await.expect("wiper zone ready → idle row");
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await

@@ -17,16 +17,12 @@ const VIRTUAL_CAR_IDENTITY: &str = "My-Opel-Corsa-1.4-GSi";
 #[tokio::main]
 async fn main() -> Result<()> {
     let print_transitions_only = env::args().any(|arg| arg == "--print-transitions-only");
-    let print_timer_tick = env::args().any(|arg| arg == "--print-timer-tick");
     let trace_actuation_ingress = env::args().any(|arg| arg == "--trace-actuation-ingress");
 
     let mut builder = gateway_runtime::TwinRuntimeBuilder::new()
         .with_car_identity(VIRTUAL_CAR_IDENTITY)
         .with_can_interface(gateway_runtime::DEFAULT_CAN_INTERFACE);
 
-    if print_timer_tick && !print_transitions_only {
-        builder = builder.with_timer_tick_logging();
-    }
     if trace_actuation_ingress && !print_transitions_only {
         builder = builder.with_actuation_ingress_trace();
     }

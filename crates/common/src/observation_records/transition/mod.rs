@@ -3,7 +3,7 @@
 //! The pure FSM core measures time with [`std::time::Instant`] — monotonic, process-local, and
 //! deliberately **not** serializable (it has no defined zero). For anything that leaves the
 //! process — a file, a wire, an offline verifier — every `Instant` is projected to a
-//! [`Duration`] since [`UNIX_EPOCH`], anchored once per session by a [`SessionEpoch`].
+//! [`Duration`] since [`UNIX_EPOCH`], anchored once per session by a [`SessionClock`].
 //!
 //! Design contract (see `docs/design-notes-runtime-observation.md`, item "(1)"):
 //! - **Permanence of `Instant` inside:** [`crate::fsm::FsmState`],
@@ -12,8 +12,8 @@
 //! - **Duration for the world:** this module owns the full, lossless mirror of those types with
 //!   each `Instant` replaced by a wall-clock `Duration` since `UNIX_EPOCH`, plus serde for now.
 //!
-//! Ordering for offline folding is `record_seq` (clock-independent); `at_unix` answers
-//! *how long between transitions*; `session_epoch_unix_nanos` says *which run*.
+//! Ordering for offline folding is `record_seq` (clock-independent); `recorded_at_unix`
+//! answers *how long between transitions*; `session_start_unix_nanos` says *which run*.
 //!
 //! **Wire format:** serde (JSON, etc.) is implemented here today. When we adopt Protobuf (or
 //! another binary schema), add a dedicated codec module that maps from these types — do not
@@ -33,18 +33,22 @@ use crate::vehicle_state::{
     PowertrainContext, VehicleContext, VehicleHealthContext, VisibilityContext, WheelRpm,
 };
 
-/// Per-session correlation between the monotonic clock and the wall clock.
+/// Per-session clock: correlates monotonic [`Instant`] with wall time since [`UNIX_EPOCH`].
 ///
-/// Captured once at actor start. `started_at_instant` is the monotonic anchor used to *measure*
-/// elapsed time; `started_at_unix` is the wall-clock placement of that same anchor. Any later
-/// monotonic instant `t` projects to a wall stamp as `started_at_unix + (t - started_at_instant)`.
+/// Captured once at actor start. This is **not** a timestamp — it is the anchor used to
+/// project monotonic instants into serializable wall-clock [`Duration`]s. The session start
+/// itself is exposed as [`Self::session_start_unix_nanos`].
+///
+/// `started_at_instant` is the monotonic anchor; `started_at_unix` is when that anchor sits
+/// on the wall clock. Any later monotonic instant `t` projects to
+/// `started_at_unix + (t - started_at_instant)`.
 #[derive(Debug, Clone, Copy)]
-pub struct SessionEpoch {
+pub struct SessionClock {
     started_at_instant: Instant,
     started_at_unix: Duration,
 }
 
-impl SessionEpoch {
+impl SessionClock {
     /// Capture the (monotonic, wall) anchor pair now. Reads the wall clock exactly once.
     pub fn capture() -> Self {
         Self {
@@ -59,12 +63,12 @@ impl SessionEpoch {
     ///
     /// `saturating_duration_since` guards the (not-expected) case of an instant before the
     /// anchor, yielding the anchor's own wall stamp rather than underflowing.
-    pub fn project(&self, t: Instant) -> Duration {
+    pub fn project(&self, t: &Instant) -> Duration {
         self.started_at_unix + t.saturating_duration_since(self.started_at_instant)
     }
 
-    /// Stable identifier of this run: the session start as nanoseconds since `UNIX_EPOCH`.
-    pub fn session_id_nanos(&self) -> u128 {
+    /// When this session started: nanoseconds since `UNIX_EPOCH`. Stable run identifier.
+    pub fn session_start_unix_nanos(&self) -> u128 {
         self.started_at_unix.as_nanos()
     }
 }
@@ -216,11 +220,27 @@ pub enum PublishedFsmState {
     Idle,
     Driving,
     DrivingDangerously,
-    /// The monotonic warning anchor projected to wall-clock placement.
+    /// When the warning state was entered, projected to wall clock.
     ExtremeOperationWarning {
-        began_at_unix: Duration,
+        entered_at_unix: Duration,
     },
     PreparingToStop,
+}
+
+impl PublishedFsmState {
+    fn project(state: &FsmState, clock: &SessionClock) -> Self {
+        match state {
+            FsmState::Off => Self::Off,
+            FsmState::PreparingToStart { .. } => Self::PreparingToStart,
+            FsmState::Idle => Self::Idle,
+            FsmState::Driving => Self::Driving,
+            FsmState::DrivingDangerously => Self::DrivingDangerously,
+            FsmState::ExtremeOperationWarning(at) => Self::ExtremeOperationWarning {
+                entered_at_unix: clock.project(at),
+            },
+            FsmState::PreparingToStop { .. } => Self::PreparingToStop,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,8 +310,17 @@ impl From<&VisibilityContext> for PublishedVisibilityContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedHeadlampContext {
     pub state: PublishedHeadlampState,
-    /// The monotonic ACK-wait anchor projected to wall-clock placement, if pending.
-    pub ack_pending_since_unix: Option<Duration>,
+    /// When ACK wait began, projected to wall clock (`None` if not pending).
+    pub ack_pending_since_at_unix: Option<Duration>,
+}
+
+impl PublishedHeadlampContext {
+    fn project(h: &HeadlampContext, clock: &SessionClock) -> Self {
+        Self {
+            state: (&h.state).into(),
+            ack_pending_since_at_unix: h.ack_pending_since.as_ref().map(|t| clock.project(t)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,16 +331,27 @@ pub struct PublishedVehicleContext {
     pub headlamp: PublishedHeadlampContext,
 }
 
+impl PublishedVehicleContext {
+    fn project(ctx: &VehicleContext, clock: &SessionClock) -> Self {
+        Self {
+            powertrain: (&ctx.powertrain).into(),
+            health: (&ctx.health).into(),
+            visibility: (&ctx.visibility).into(),
+            headlamp: PublishedHeadlampContext::project(&ctx.headlamp, clock),
+        }
+    }
+}
+
 /// The serializable, `Instant`-free transition record emitted "to the world".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishedTransitionRecord {
     pub car_identity: String,
     /// Which run produced this record (session start, nanoseconds since `UNIX_EPOCH`).
-    pub session_epoch_unix_nanos: u128,
+    pub session_start_unix_nanos: u128,
     /// Monotonic, clock-independent ledger order (Counter A).
     pub record_seq: u64,
-    /// When this transition occurred, as a `Duration` since `UNIX_EPOCH`.
-    pub at_unix: Duration,
+    /// When this transition was recorded, as a `Duration` since `UNIX_EPOCH`.
+    pub recorded_at_unix: Duration,
     pub event: PublishedFsmEvent,
     pub old_state: PublishedFsmState,
     pub next_state: PublishedFsmState,
@@ -320,60 +360,29 @@ pub struct PublishedTransitionRecord {
     pub actions: Vec<PublishedDomainAction>,
 }
 
-impl SessionEpoch {
-    fn fsm_state(&self, state: &FsmState) -> PublishedFsmState {
-        match state {
-            FsmState::Off => PublishedFsmState::Off,
-            FsmState::PreparingToStart { .. } => PublishedFsmState::PreparingToStart,
-            FsmState::Idle => PublishedFsmState::Idle,
-            FsmState::Driving => PublishedFsmState::Driving,
-            FsmState::DrivingDangerously => PublishedFsmState::DrivingDangerously,
-            FsmState::ExtremeOperationWarning(at) => PublishedFsmState::ExtremeOperationWarning {
-                began_at_unix: self.project(*at),
-            },
-            FsmState::PreparingToStop { .. } => PublishedFsmState::PreparingToStop,
-        }
-    }
-
-    fn headlamp(&self, h: &HeadlampContext) -> PublishedHeadlampContext {
-        PublishedHeadlampContext {
-            state: (&h.state).into(),
-            ack_pending_since_unix: h.ack_pending_since.map(|t| self.project(t)),
-        }
-    }
-
-    fn vehicle_context(&self, ctx: &VehicleContext) -> PublishedVehicleContext {
-        PublishedVehicleContext {
-            powertrain: (&ctx.powertrain).into(),
-            health: (&ctx.health).into(),
-            visibility: (&ctx.visibility).into(),
-            headlamp: self.headlamp(&ctx.headlamp),
-        }
-    }
-}
-
 impl PublishedTransitionRecord {
     /// Project a pure [`RawTransitionRecord`] into its serializable, wall-clock-stamped form.
     ///
-    /// This is the sole point that consumes the [`SessionEpoch`]; every `Instant` in the raw
-    /// record (the timestamp, the warning anchor in either state, the headlamp ACK anchor in
-    /// either context) becomes a `Duration` since `UNIX_EPOCH`.
+    /// Composition root: packages envelope metadata and delegates each field to its published
+    /// type's projection (`From` for instant-free fields, `project` where a [`SessionClock`]
+    /// is required). Emitted via [`sink::TransitionRecordSink`] (e.g. tokio mpsc); wire codecs
+    /// map from this type separately.
     pub fn project(
         raw: &RawTransitionRecord,
         car_identity: &str,
         record_seq: u64,
-        epoch: &SessionEpoch,
+        clock: &SessionClock,
     ) -> Self {
         Self {
             car_identity: car_identity.to_owned(),
-            session_epoch_unix_nanos: epoch.session_id_nanos(),
+            session_start_unix_nanos: clock.session_start_unix_nanos(),
             record_seq,
-            at_unix: epoch.project(raw.at),
+            recorded_at_unix: clock.project(&raw.at),
             event: (&raw.event).into(),
-            old_state: epoch.fsm_state(&raw.old_state),
-            next_state: epoch.fsm_state(&raw.next_state),
-            old_ctx: epoch.vehicle_context(&raw.old_ctx),
-            current_ctx: epoch.vehicle_context(&raw.current_ctx),
+            old_state: PublishedFsmState::project(&raw.old_state, clock),
+            next_state: PublishedFsmState::project(&raw.next_state, clock),
+            old_ctx: PublishedVehicleContext::project(&raw.old_ctx, clock),
+            current_ctx: PublishedVehicleContext::project(&raw.current_ctx, clock),
             actions: raw
                 .actions
                 .iter()
@@ -382,3 +391,5 @@ impl PublishedTransitionRecord {
         }
     }
 }
+
+

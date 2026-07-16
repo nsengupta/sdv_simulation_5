@@ -1,11 +1,12 @@
-//! `TwinRuntimeBuilder` — assembles the live Digital Twin runtime.
+//! `TwinRuntimeBuilder` — gateway runtime API for assembling the live Digital Twin.
 //!
-//! Gateway and Dashboard both use this builder to wire up:
+//! One application (`main`) typically owns both the **Digital Twin** (install + ingress via
+//! this builder) and the **Dashboard** (observation receivers wired in setup). The builder
+//! connects:
 //!   - `VehicleController` (actor tree)
 //!   - Diagnostic channel (unbounded) — caller creates, passes sender
 //!   - Transition channel (bounded)   — caller creates, passes sender
 //!   - Actuation channel              — created internally (CAN egress detail)
-//!   - Timer tick loop
 //!   - CAN reader thread
 //!   - Actuation command publishers
 //!   - Ingress dispatch loop
@@ -14,18 +15,17 @@
 //! 1. `TwinRuntimeBuilder::new()` — minimal defaults
 //! 2. `.with_car_identity(...)`, `.with_can_interface(...)`, etc.
 //! 3. `.install_controller().await` — spawns actor tree, creates actuation channel
-//! 4. `.spawn_runtime()` — spawns timer, CAN reader, publishers, returns `JoinHandle`
+//! 4. `.spawn_runtime()` — spawns CAN reader, publishers, returns `JoinHandle`
 //! 5. (Gateway) `.run()` = `install_controller()` + `spawn_runtime()` + await dispatch
 
 use anyhow::Result;
 use common::facade::{
-    ActuationCommand, PhysicalCarVocabulary, PublishedTransitionRecord, VehicleController,
-    VehicleControllerRuntimeOptions, VehicleEvent, VssSignal, spawn_stdout_diagnostic_observer,
+    ActuationCommand, PublishedTransitionRecord, TwinIngressEvent, VehicleController,
+    VehicleControllerRuntimeOptions, VssSignal, spawn_stdout_diagnostic_observer,
 };
 use common::DiagnosticRecord;
 use socketcan::{CanSocket, Socket};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use vehicle_device_bus::devices::front_headlamp::can::{
@@ -42,7 +42,6 @@ use crate::transition_log;
 /// Default SocketCAN interface (matches emulator and front_headlamp_actuator).
 pub const DEFAULT_CAN_INTERFACE: &str = "vcan0";
 
-const TIMER_TICK_MS: u64 = 100;
 const ACTUATION_COMMAND_CHANNEL_CAPACITY: usize = 64;
 /// Bound on the off-task ingress-log queue. Logging is best-effort: a frozen console
 /// (Ctrl-S / XOFF) must not stall the CAN ingress dispatch loop (which also delivers ACKs to the
@@ -51,9 +50,9 @@ const INGRESS_LOG_CHANNEL_CAPACITY: usize = 512;
 
 /// Messages forwarded from the dedicated CAN reader thread into the async dispatch loop.
 enum CanIngressEnvelope {
-    Physical(PhysicalCarVocabulary),
+    TwinIngress(TwinIngressEvent),
     ActuationResponse {
-        physical: PhysicalCarVocabulary,
+        twin_ingress: TwinIngressEvent,
         session: u16,
         sequence: u32,
     },
@@ -72,11 +71,12 @@ enum CanIngressEnvelope {
 pub struct TwinRuntimeBuilder {
     car_identity: Option<String>,
     can_interface: String,
-    log_timer_tick: bool,
     trace_actuation_ingress: bool,
     diagnostic_tx: Option<mpsc::UnboundedSender<DiagnosticRecord>>,
     transition_tx: Option<mpsc::Sender<PublishedTransitionRecord>>,
     headlamp_policy: Arc<Mutex<FrontHeadlampPolicy>>,
+    /// When true (default), `spawn_runtime` sends `PowerOn` after install. Dashboard sets false.
+    auto_power_on: bool,
     /// Created internally by [`install_controller`]; consumed by [`spawn_runtime`].
     actuation_cmd_rx: Option<mpsc::Receiver<ActuationCommand>>,
 }
@@ -87,11 +87,11 @@ impl TwinRuntimeBuilder {
         Self {
             car_identity: None,
             can_interface: DEFAULT_CAN_INTERFACE.to_string(),
-            log_timer_tick: false,
             trace_actuation_ingress: false,
             diagnostic_tx: None,
             transition_tx: None,
             headlamp_policy: Arc::new(Mutex::new(FrontHeadlampPolicy::default())),
+            auto_power_on: true,
             actuation_cmd_rx: None,
         }
     }
@@ -105,12 +105,6 @@ impl TwinRuntimeBuilder {
     /// Set the SocketCAN interface name (default: `vcan0`).
     pub fn with_can_interface(mut self, iface: impl Into<String>) -> Self {
         self.can_interface = iface.into();
-        self
-    }
-
-    /// Enable TimerTick heartbeat logging.
-    pub fn with_timer_tick_logging(mut self) -> Self {
-        self.log_timer_tick = true;
         self
     }
 
@@ -130,6 +124,18 @@ impl TwinRuntimeBuilder {
     pub fn with_transition_channel(mut self, tx: mpsc::Sender<PublishedTransitionRecord>) -> Self {
         self.transition_tx = Some(tx);
         self
+    }
+
+    /// When `true`, [`Self::spawn_runtime`] sends `PowerOn` after workers start (gateway / CI default).
+    /// Dashboard must pass `false` so the operator controls Start — see `DESIGN.md` §16.
+    pub fn with_auto_power_on(mut self, enabled: bool) -> Self {
+        self.auto_power_on = enabled;
+        self
+    }
+
+    /// Whether [`Self::spawn_runtime`] will auto-send `PowerOn`.
+    pub(crate) fn auto_power_on(&self) -> bool {
+        self.auto_power_on
     }
 
     /// Attach a stdout diagnostic observer for the given receiver.
@@ -167,7 +173,6 @@ impl TwinRuntimeBuilder {
             mpsc::channel(ACTUATION_COMMAND_CHANNEL_CAPACITY);
 
         let runtime_options = VehicleControllerRuntimeOptions {
-            log_timer_tick: self.log_timer_tick,
             actuation_command_tx: Some(actuation_cmd_tx),
             diagnostic_tx: self.diagnostic_tx.clone(),
             transition_tx: self.transition_tx.clone(),
@@ -198,6 +203,7 @@ impl TwinRuntimeBuilder {
         let can_interface = self.can_interface.clone();
         let headlamp_policy = self.headlamp_policy.clone();
         let trace_actuation_ingress = self.trace_actuation_ingress;
+        let auto_power_on = self.auto_power_on();
         let actuation_cmd_rx = self
             .actuation_cmd_rx
             .take()
@@ -213,9 +219,6 @@ impl TwinRuntimeBuilder {
             });
             tx
         };
-
-        // Timer tick loop
-        spawn_timer_tick_loop(controller.clone());
 
         // Actuation command publishers (fan-out to headlamp + wiper)
         spawn_actuation_command_publishers(
@@ -235,20 +238,21 @@ impl TwinRuntimeBuilder {
 
         // Print startup banners
         println!(
-            "⚡ Gateway on {can_interface} — CAN → VehicleEvent → PhysicalCarVocabulary → VehicleController"
+            "⚡ Gateway on {can_interface} — CAN → TwinIngressEvent → VehicleController"
         );
         println!(
             "[gateway] front-headlamp + wiper CMD egress on CAN; \
              run `cargo run -p front_headlamp_actuator` and `cargo run -p wiper_actuator`"
         );
 
-        // We need to send PowerOn asynchronously — do it in a spawned task.
-        let c = controller.clone();
-        tokio::spawn(async move {
-            if let Err(e) = c.send_power_on().await {
-                eprintln!("[gateway] PowerOn failed: {e:?}");
-            }
-        });
+        if auto_power_on {
+            let c = controller.clone();
+            tokio::spawn(async move {
+                if let Err(e) = c.send_power_on().await {
+                    eprintln!("[gateway] PowerOn failed: {e:?}");
+                }
+            });
+        }
 
         // Spawn ingress dispatch loop and return its JoinHandle.
         let dispatch = tokio::spawn(run_can_ingress_dispatch_loop(
@@ -286,16 +290,6 @@ impl Default for TwinRuntimeBuilder {
 // Private helpers
 // ---------------------------------------------------------------------------
 
-fn spawn_timer_tick_loop(controller: VehicleController) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(TIMER_TICK_MS)).await;
-            let physical = ingress::vehicle_event_to_physical_vocabulary(VehicleEvent::TimerTick);
-            let _ = controller.submit_physical_car_event(physical).await;
-        }
-    });
-}
-
 /// Dedicated OS thread for blocking `read_frame()` loop.
 fn spawn_can_reader_thread(
     can_interface: String,
@@ -316,13 +310,17 @@ fn spawn_can_reader_thread(
                         continue;
                     }
                 };
-                if let Some(sig) = VssSignal::from_can_frame(&frame) {
-                    if matches!(sig, VssSignal::VehicleSpeed(_)) {
+                if let Some(twin_ingress) = ingress::can_frame_to_twin_ingress(&frame) {
+                    if matches!(
+                        twin_ingress,
+                        TwinIngressEvent::Telemetry(VssSignal::Speed(_))
+                    ) {
                         continue;
                     }
-                    let ev = VehicleEvent::TelemetryUpdate(sig);
-                    let physical = ingress::vehicle_event_to_physical_vocabulary(ev);
-                    if tx.send(CanIngressEnvelope::Physical(physical)).is_err() {
+                    if tx
+                        .send(CanIngressEnvelope::TwinIngress(twin_ingress))
+                        .is_err()
+                    {
                         break;
                     }
                     continue;
@@ -336,13 +334,13 @@ fn spawn_can_reader_thread(
                     };
                     match decision {
                         FrontHeadlampPolicyDecision::Accept {
-                            physical,
+                            twin_ingress,
                             session,
                             sequence,
                         } => {
                             if tx
                                 .send(CanIngressEnvelope::ActuationResponse {
-                                    physical,
+                                    twin_ingress,
                                     session,
                                     sequence,
                                 })
@@ -459,19 +457,19 @@ fn spawn_wiper_command_publisher(
 fn format_front_headlamp_ingress(
     session: u16,
     sequence: u32,
-    physical: &PhysicalCarVocabulary,
+    twin_ingress: &TwinIngressEvent,
 ) -> Option<String> {
-    let (icon, msg) = match physical {
-        PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: true } => {
+    let (icon, msg) = match twin_ingress {
+        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true } => {
             ("✓", "ACK_ON")
         }
-        PhysicalCarVocabulary::FrontHeadlampCommandConfirmed { on_command: false } => {
+        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: false } => {
             ("✓", "ACK_OFF")
         }
-        PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command: true } => {
+        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true } => {
             ("✗", "NACK_ON")
         }
-        PhysicalCarVocabulary::FrontHeadlampCommandRejected { on_command: false } => {
+        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: false } => {
             ("✗", "NACK_OFF")
         }
         _ => return None,
@@ -488,22 +486,22 @@ async fn run_can_ingress_dispatch_loop(
 ) -> Result<()> {
     while let Some(msg) = rx.recv().await {
         match msg {
-            CanIngressEnvelope::Physical(physical) => {
+            CanIngressEnvelope::TwinIngress(twin_ingress) => {
                 controller
-                    .submit_physical_car_event(physical)
+                    .submit_twin_ingress(twin_ingress)
                     .await
-                    .map_err(|e| anyhow::anyhow!("submit physical car event: {e:?}"))?;
+                    .map_err(|e| anyhow::anyhow!("submit twin ingress: {e:?}"))?;
             }
             CanIngressEnvelope::ActuationResponse {
-                physical,
+                twin_ingress,
                 session,
                 sequence,
             } => {
-                let line = format_front_headlamp_ingress(session, sequence, &physical);
+                let line = format_front_headlamp_ingress(session, sequence, &twin_ingress);
                 controller
-                    .submit_physical_car_event(physical)
+                    .submit_twin_ingress(twin_ingress)
                     .await
-                    .map_err(|e| anyhow::anyhow!("submit physical car event: {e:?}"))?;
+                    .map_err(|e| anyhow::anyhow!("submit twin ingress: {e:?}"))?;
                 if let Some(line) = line {
                     let _ = ingress_log_tx.try_send(line);
                 }
@@ -542,6 +540,18 @@ mod tests {
 
         assert!(builder.diagnostic_tx.is_some());
         assert!(builder.transition_tx.is_some());
+    }
+
+    #[tokio::test]
+    async fn builder_auto_power_on_defaults_true() {
+        let builder = TwinRuntimeBuilder::new();
+        assert!(builder.auto_power_on());
+    }
+
+    #[tokio::test]
+    async fn builder_with_auto_power_on_false() {
+        let builder = TwinRuntimeBuilder::new().with_auto_power_on(false);
+        assert!(!builder.auto_power_on());
     }
 
     #[tokio::test]

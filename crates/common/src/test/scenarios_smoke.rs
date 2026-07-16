@@ -1,6 +1,6 @@
 //! Black-box scenario smoke tests: actor lifecycle + state journeys.
 
-use crate::digital_twin::DigitalTwinCarVocabulary;
+use crate::digital_twin::TwinMessage;
 use crate::twin_runtime::controller::virtual_car_actor::VirtualCarActor;
 use crate::fsm::{FsmEvent, FsmState};
 use crate::test::{power_on_to_idle, ActorGuard};
@@ -12,14 +12,14 @@ const DEFAULT_ACTOR_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Snapshot retrieval with a caller-defined timeout.
 async fn get_snapshot(
-    actor: &ractor::ActorRef<DigitalTwinCarVocabulary>,
+    actor: &ractor::ActorRef<TwinMessage>,
     timeout: Duration,
 ) -> crate::CarSnapshot {
     use ractor::rpc::CallResult;
 
     match actor
         .call(
-            |port| DigitalTwinCarVocabulary::GetStatus(port),
+            |port| TwinMessage::GetStatus(port),
             Some(timeout),
         )
         .await
@@ -38,7 +38,7 @@ async fn get_snapshot(
 }
 
 async fn wait_for_ambient_lux(
-    actor: &ractor::ActorRef<DigitalTwinCarVocabulary>,
+    actor: &ractor::ActorRef<TwinMessage>,
     expected: u16,
     timeout: std::time::Duration,
 ) -> crate::CarSnapshot {
@@ -87,7 +87,7 @@ async fn scenario_power_on_then_drive_rpm_enters_driving() {
     power_on_to_idle(&controller).await;
 
     actor
-        .send_message(DigitalTwinCarVocabulary::from(FsmEvent::UpdateAmbientLux(
+        .send_message(TwinMessage::from(FsmEvent::UpdateAmbientLux(
             crate::vehicle_physics::LUX_ON_THRESHOLD + 100,
         )))
         .unwrap();
@@ -100,7 +100,7 @@ async fn scenario_power_on_then_drive_rpm_enters_driving() {
     .await;
 
     actor
-        .send_message(DigitalTwinCarVocabulary::from(FsmEvent::UpdateRpm(1200)))
+        .send_message(TwinMessage::from(FsmEvent::UpdateRpm(1200)))
         .unwrap();
 
     let car = get_snapshot(&actor, DEFAULT_ACTOR_TIMEOUT).await;
@@ -119,13 +119,14 @@ async fn scenario_rpm_input_ignored_when_ignition_off() {
     };
 
     actor
-        .send_message(DigitalTwinCarVocabulary::from(FsmEvent::UpdateRpm(3000)))
+        .send_message(TwinMessage::from(FsmEvent::UpdateRpm(3000)))
         .unwrap();
     tokio::task::yield_now().await;
 
     let car = get_snapshot(&actor, DEFAULT_ACTOR_TIMEOUT).await;
     assert_eq!(*car.current_state(), FsmState::Off);
-    assert_eq!(car.context().powertrain.wheel_rpm.front_left, 3000);
+    assert_eq!(car.context().powertrain.wheel_rpm.front_left, 0);
+    assert_eq!(car.as_of_seq(), 0);
     car.verify_all_invariants()
         .expect("Safety breach on invalid input");
 }
@@ -145,7 +146,7 @@ async fn scenario_redline_rpm_from_driving_enters_warning() {
     power_on_to_idle(&controller).await;
 
     actor
-        .send_message(DigitalTwinCarVocabulary::from(FsmEvent::UpdateAmbientLux(
+        .send_message(TwinMessage::from(FsmEvent::UpdateAmbientLux(
             crate::vehicle_physics::LUX_ON_THRESHOLD + 100,
         )))
         .unwrap();
@@ -158,10 +159,10 @@ async fn scenario_redline_rpm_from_driving_enters_warning() {
     .await;
 
     actor
-        .send_message(DigitalTwinCarVocabulary::from(FsmEvent::UpdateRpm(2000)))
+        .send_message(TwinMessage::from(FsmEvent::UpdateRpm(2000)))
         .unwrap();
     actor
-        .send_message(DigitalTwinCarVocabulary::from(FsmEvent::UpdateRpm(7500)))
+        .send_message(TwinMessage::from(FsmEvent::UpdateRpm(7500)))
         .unwrap();
 
     let car = get_snapshot(&actor, DEFAULT_ACTOR_TIMEOUT).await;
@@ -188,7 +189,7 @@ async fn scenario_get_status_after_power_on_reports_idle() {
 
     let twin_snapshot = actor_ref
         .call(
-            |port| DigitalTwinCarVocabulary::GetStatus(port),
+            |port| TwinMessage::GetStatus(port),
             Some(DEFAULT_ACTOR_TIMEOUT),
         )
         .await

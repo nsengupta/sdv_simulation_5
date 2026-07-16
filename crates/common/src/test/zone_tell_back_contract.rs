@@ -72,7 +72,7 @@ fn driving_ctx() -> crate::vehicle_state::VehicleContext {
 
 #[tokio::test]
 async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unresponsive_warning() {
-    use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneReply};
+    use crate::digital_twin::{TwinMessage, ZoneReply};
     use crate::fsm::{FsmEvent, FsmState, HeadlampState, AssemblyId};
     use crate::test::ActorGuard;
     use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_WAIT};
@@ -105,7 +105,7 @@ async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unr
     tokio::task::yield_now().await; // give the actor time to create the startup barrier
     controller
         .get_actor_ref()
-        .send_message(DigitalTwinCarVocabulary::ZoneReady {
+        .send_message(TwinMessage::ZoneReady {
             zone_id: AssemblyId::Headlamp,
             turn_id: 2, // startup barrier is always turn 2 (PowerOn=1, StartAssemblies barrier=2)
             tell_attempt: 0,

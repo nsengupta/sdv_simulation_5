@@ -219,7 +219,7 @@ Detail: [`docs/library-reorg.md`](docs/library-reorg.md)
 ## Brain Architecture (VirtualCarActor)
 
 ```text
-DigitalTwinCarVocabulary (mailbox)
+TwinMessage (actor mailbox)
 ├── Fsm(FsmEvent)                         ← CAN ingress / detector events
 ├── ZoneReady { zone_id, turn_id, reply } ← twinlet tell-back (correlated)
 ├── ZoneSpontaneous { zone_id, event }    ← twinlet tell-back (unsolicited)
@@ -464,10 +464,83 @@ when no detector fires or `MAX_QUIESCENCE_HOPS` is reached.
 
 ---
 
+## Dashboard app and twin lifecycle
+
+The reference application is **one process, one `main()`**, with two cooperating parts:
+
+| Part | Role |
+|------|------|
+| **Digital Twin** | Installed and run via **gateway runtime APIs** ([`TwinRuntimeBuilder`](crates/gateway/src/gateway_runtime.rs)): actor tree, `SessionClock`, CAN ingress, actuation egress |
+| **Dashboard** | Terminal UI (`tui_dashboard`) that **displays** what the twin emits on wired channels |
+
+Full design: [`DESIGN.md` §16](DESIGN.md#16-twin-lifecycle-install--start--operate--stop--disband). Architecture overview: [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased roadmap: [`docs/PHASES.md`](docs/PHASES.md). Checklist: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md).
+
+> **Note:** The combined `tui_dashboard` app (twin in-process) is **transitional** until [Phase 5](docs/PHASES.md#phase-5--split-gateway-and-dashboard-processes). The target is separate Gateway, Dashboard, Emulator, and actuator processes on CAN.
+
+### Setup (before the UI loop)
+
+1. `main()` creates **diagnostic** and **transition** channels (sender + receiver).
+2. `TwinRuntimeBuilder::install_controller()` installs the twin and attaches senders to the actor tree.
+3. `spawn_runtime()` starts the CAN reader, ingress dispatch loop, and actuation publishers.
+4. The dashboard loop holds the receivers and renders the **latest** diagnostic and ledger row each frame.
+
+The dashboard **trusts the twin completely** for display. Vehicle operation and **lifecycle**
+(PowerOn/PowerOff) are driven by **emulators and actuators on CAN** — not by dashboard keys
+(**lifecycle owner A**, decided).
+
+### Twin while `Off` — silent ignore (target)
+
+The twin is installed and ready to mirror the real car, but until **PowerOn** it **silently
+ignores** all driver-side ingress (RPM, lux, rain, …): no FSM hops, no ledger rows, no context
+updates. Only **PowerOn** is processed. *Not fully implemented yet* — pre-Start CAN can still
+advance `Seq` today; see refactoring doc.
+
+### Lifecycle keys (transitional)
+
+Dashboard **`s`** / **`o`** send PowerOn/PowerOff programmatically — **temporary** until
+emulator **echo** mode sends lifecycle on CAN (`0x100`). Prefer:
+
+```text
+actuators → tui_dashboard → emulator (script includes PowerOn … PowerOff)
+```
+
+| Key | Status |
+|-----|--------|
+| **`s`** / **`o`** | Transitional — remove when echo + CAN lifecycle land |
+| **`q`** / Esc | Quit UI (see limitation below) |
+
+There is **no accessory-power mode**: boot diagnostic may show session time while FSM is `Off`;
+the car is not powered until **PowerOn** arrives on the ingress path.
+
+### CAN before Start
+
+See [Twin while `Off`](#twin-while-off--silent-ignore-target). Do not interpret pre-Start
+telemetry as “car partially on”. Emulator echo scripts will send **PowerOn** as the first
+lifecycle step on the bus.
+
+### Gateway headless vs dashboard app
+
+| Binary | Start | Use |
+|--------|-------|-----|
+| **`tui_dashboard`** | Emulator **PowerOn on CAN** (target); **`s` transitional** | Interactive observation |
+| **`gateway`** | Auto `PowerOn` on spawn (default) | Headless / CI |
+
+```bash
+# Dashboard app (install + CAN ingress; manual Start)
+cargo run -p tui_dashboard
+```
+
+### Quit (`q`) — current limitation
+
+Today, **`q` exits the process**, which drops the runtime `JoinHandle` and **stops in-process CAN ingress and twin workers** as a side effect. Emulators and actuators in other terminals keep running on `vcan0`. Explicit Stop / disband before quit (**TL-6**) is not implemented yet.
+
+---
+
 ## How to Run
 
-**Four processes** share Linux **SocketCAN** (`vcan0` by default). Start the actuators before
-or alongside the gateway so CMD frames have a listener on the bus.
+**Five processes** (or four if you use the dashboard app instead of headless gateway) share
+Linux **SocketCAN** (`vcan0` by default). Start the actuators before or alongside the twin
+so CMD frames have a listener on the bus.
 
 ```bash
 # One-time setup (per boot)
@@ -475,7 +548,7 @@ sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan 2>/dev/null || true
 sudo ip link set up vcan0
 
-# Terminal 1 — CAN emulator (RPM + ambient lux + rain sensor)
+# Terminal 1 — CAN emulator (RPM + ambient lux + rain sensor; random "generate" mode)
 cargo run -p emulator
 
 # Terminal 2 — Headlamp actuator (CMD in → ACK/NACK out)
@@ -484,12 +557,19 @@ cargo run -p front_headlamp_actuator
 # Terminal 3 — Wiper actuator (CMD in → motor log out; no ACK/NACK)
 cargo run -p wiper_actuator
 
-# Terminal 4 — Gateway (Brain + HeadlampActor + WiperActor)
+# Terminal 4a — Dashboard app (manual Start: press 's' in the TUI)
+cargo run -p tui_dashboard
+
+# Terminal 4b — OR headless gateway (auto PowerOn on spawn)
 cargo run -p gateway
 
 # Optional: coloured transition ledger only (no diagnostics)
 cargo run -p gateway -- --print-transitions-only
 ```
+
+**Dashboard workflow (target):** start actuators → **`tui_dashboard`** → emulator echo script
+(includes PowerOn). Until echo lands, **`s`** remains a transitional workaround — see
+[`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md) and [`docs/PHASES.md`](docs/PHASES.md).
 
 ### Tunable probabilities (optional)
 
@@ -564,5 +644,7 @@ Detail: [`docs/design-documents.md`](docs/design-documents.md)
   the reader/report tool is designed but unbuilt.
 - Not a replacement for the pyramid/ADR docs — see `docs/library-reorg.md`.
 
-Known gaps carried forward to Iteration 5: CAN emulation for `PowerOn`/`PowerOff`, non-blocking
-actuation (child actor), HeadlampActor isolation tests, `ActuationIncomplete(Off)` coverage.
+Known gaps carried forward: CAN emulation for `PowerOn`/`PowerOff` on CAN `0x100`, non-blocking
+actuation (child actor), HeadlampActor isolation tests, `ActuationIncomplete(Off)` coverage,
+explicit shutdown/disband on dashboard quit (**Phase 9** / TL-6, deferred until CAN E2E gate).
+Twin lifecycle status: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) (TL-0–TL-5 done; TL-6+ pending).

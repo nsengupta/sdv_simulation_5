@@ -1,13 +1,13 @@
 //! L4 headlamp twinlet — brain **tell**s [`HeadlampActorVocabulary::Apply`]; twinlet **tell**s
-//! [`DigitalTwinCarVocabulary::ZoneReady`] (correlated) or
-//! [`DigitalTwinCarVocabulary::ZoneSpontaneous`] (ACK timer).
+//! [`TwinMessage::ZoneReady`] (correlated) or
+//! [`TwinMessage::ZoneSpontaneous`] (ACK timer).
 
 use async_trait::async_trait;
 use ractor::concurrency::{Duration as RactorDuration, JoinHandle};
 use ractor::{Actor, ActorProcessingErr, ActorRef, MessagingErr};
 use std::time::Instant;
 
-use crate::digital_twin::{DigitalTwinCarVocabulary, ZoneReply, ZoneSpontaneousEvent};
+use crate::digital_twin::{TwinMessage, ZoneReply, ZoneSpontaneousEvent};
 use crate::fsm::{FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection};
 use crate::vehicle_physics::{FRONT_HEADLAMP_OFF_ACK_WAIT, FRONT_HEADLAMP_ON_ACK_WAIT};
 use crate::vehicle_state::{HeadlampContext, HeadlampMessage, HeadlampState};
@@ -22,7 +22,7 @@ pub struct HeadlampActorVocabulary {
     pub turn_id: u64,
     /// Matches brain tell-back wait attempt (retries use incrementing ids).
     pub tell_attempt: u32,
-    pub brain: ActorRef<DigitalTwinCarVocabulary>,
+    pub brain: ActorRef<TwinMessage>,
 }
 
 /// Headlamp twinlet mailbox — brain tells plus internal ACK deadlines.
@@ -39,7 +39,7 @@ pub struct HeadlampActorState {
     pub ctx: HeadlampContext,
     /// When true, swallow tells without tell-back (contract tests only).
     pub silent: bool,
-    brain: Option<ActorRef<DigitalTwinCarVocabulary>>,
+    brain: Option<ActorRef<TwinMessage>>,
     ack_timer: Option<AckTimer>,
 }
 
@@ -119,7 +119,7 @@ impl HeadlampActor {
         state.ctx = zone_reply.ctx.clone();
         maybe_arm_ack_timer(myself, state);
         brain
-            .send_message(DigitalTwinCarVocabulary::ZoneReady {
+            .send_message(TwinMessage::ZoneReady {
                 zone_id: crate::fsm::AssemblyId::Headlamp,
                 turn_id,
                 tell_attempt,
@@ -152,7 +152,7 @@ impl HeadlampActor {
         state.ctx = zone_reply.ctx.clone();
         abort_ack_timer(&mut state.ack_timer);
         brain
-            .send_message(DigitalTwinCarVocabulary::ZoneSpontaneous {
+            .send_message(TwinMessage::ZoneSpontaneous {
                 zone_id: crate::fsm::AssemblyId::Headlamp,
                 event: ZoneSpontaneousEvent::Headlamp {
                     direction,
@@ -200,7 +200,7 @@ fn maybe_arm_ack_timer(myself: &ActorRef<HeadlampActorMsg>, state: &mut Headlamp
 /// Fire-and-forget tell to the headlamp twinlet (no reply port on this hop).
 pub fn tell_headlamp_zone(
     headlamp: &ActorRef<HeadlampActorMsg>,
-    brain: &ActorRef<DigitalTwinCarVocabulary>,
+    brain: &ActorRef<TwinMessage>,
     turn_id: u64,
     tell_attempt: u32,
     message: HeadlampMessage,

@@ -3,6 +3,7 @@
 use super::{DiagnosticLevel, DiagnosticRecord};
 use crate::front_headlamp_log::{ACK_OFF, ACK_ON, MSG_ACK_OFF, MSG_ACK_ON};
 use crate::fsm::{FrontHeadlampSwitchDirection, FsmState};
+use crate::observation_records::transition::SessionClock;
 use crate::vehicle_physics::{
     extreme_operation_active, speed_threshold_exceeded, SPEED_EXTREME_OPERATION_THRESHOLD_KPH,
 };
@@ -47,6 +48,7 @@ impl DiagnosticSink for TokioMpscDiagnosticSink {
 /// (speed / RPM) and a plain-language safety qualifier — meant for the diagnostic stream's
 /// operator audience, kept to a single compact line.
 pub fn diag_state_transition(
+    clock: &SessionClock,
     identity: &str,
     new_state: &FsmState,
     ctx: &VehicleContext,
@@ -88,35 +90,45 @@ pub fn diag_state_transition(
     };
 
     DiagnosticRecord::info(
+        clock,
         "VirtualCarActor",
         format!("[{identity}]: Transitioned to {label}{detail}"),
     )
 }
 
-pub fn diag_timer_tick(identity: &str) -> DiagnosticRecord {
-    DiagnosticRecord::info("VirtualCarActor", format!("[{identity}]: received heartbeat TimerTick"))
+pub fn diag_timer_tick(clock: &SessionClock, identity: &str) -> DiagnosticRecord {
+    DiagnosticRecord::info(
+        clock,
+        "VirtualCarActor",
+        format!("[{identity}]: received heartbeat TimerTick"),
+    )
 }
 
-pub fn diag_actuation_failure(identity: &str, action: &str, err: &str) -> DiagnosticRecord {
-    DiagnosticRecord::error("VirtualCarActor", format!("[{identity}]: actuation failure for {action}: {err}"))
+pub fn diag_actuation_failure(
+    clock: &SessionClock,
+    identity: &str,
+    action: &str,
+    err: &str,
+) -> DiagnosticRecord {
+    DiagnosticRecord::error(
+        clock,
+        "VirtualCarActor",
+        format!("[{identity}]: actuation failure for {action}: {err}"),
+    )
 }
 
 /// Warning surfaced from a `DomainAction::LogWarning` intent emitted by the pure step.
-///
-/// `LogWarning` is observability, not actuation (WI-5 / Q5), so the actor routes it here to the
-/// diagnostic sink rather than through the actuation path.
-pub fn diag_warning(identity: &str, message: &str) -> DiagnosticRecord {
-    DiagnosticRecord::warning("VirtualCarActor", format!("[{identity}]: {message}"))
+pub fn diag_warning(clock: &SessionClock, identity: &str, message: &str) -> DiagnosticRecord {
+    DiagnosticRecord::warning(
+        clock,
+        "VirtualCarActor",
+        format!("[{identity}]: {message}"),
+    )
 }
 
 /// Info diagnostic surfaced when a front-headlamp command is **positively acknowledged**.
-///
-/// Symmetric with the NACK/timeout warning path (`diag_warning` ← `DomainAction::LogWarning`): a
-/// clean ACK used to be silent on the diagnostic stream even though it was recorded in the
-/// transition ledger (`old_ctx`→`current_ctx`). The actor emits this from the step result when the
-/// lighting state settles `*Requested → On/Off`. Wording matches the gateway ingress line so the
-/// two surfaces read identically.
 pub fn diag_front_headlamp_confirmed(
+    clock: &SessionClock,
     identity: &str,
     direction: FrontHeadlampSwitchDirection,
 ) -> DiagnosticRecord {
@@ -124,21 +136,31 @@ pub fn diag_front_headlamp_confirmed(
         FrontHeadlampSwitchDirection::On => (ACK_ON, MSG_ACK_ON),
         FrontHeadlampSwitchDirection::Off => (ACK_OFF, MSG_ACK_OFF),
     };
-    DiagnosticRecord::info("VirtualCarActor", format!("[{identity}]: {icon} {msg}"))
+    DiagnosticRecord::info(
+        clock,
+        "VirtualCarActor",
+        format!("[{identity}]: {icon} {msg}"),
+    )
 }
 
-pub fn diag_transition_sink_full(identity: &str) -> DiagnosticRecord {
-    DiagnosticRecord::warning("VirtualCarActor", format!("[{identity}]: dropping transition record: sink full"))
+pub fn diag_transition_sink_full(clock: &SessionClock, identity: &str) -> DiagnosticRecord {
+    DiagnosticRecord::warning(
+        clock,
+        "VirtualCarActor",
+        format!("[{identity}]: dropping transition record: sink full"),
+    )
 }
 
-pub fn diag_transition_sink_closed(identity: &str) -> DiagnosticRecord {
-    DiagnosticRecord::warning("VirtualCarActor", format!("[{identity}]: dropping transition record: sink closed"))
+pub fn diag_transition_sink_closed(clock: &SessionClock, identity: &str) -> DiagnosticRecord {
+    DiagnosticRecord::warning(
+        clock,
+        "VirtualCarActor",
+        format!("[{identity}]: dropping transition record: sink closed"),
+    )
 }
 
 /// Spawns a task that reads [`DiagnosticRecord`] values from `rx` and prints each
 /// to stdout (or stderr for error-level).
-///
-/// The runtime calls this when it wants to attach stdout to the twin's diagnostic stream.
 pub fn spawn_stdout_diagnostic_observer(
     mut rx: mpsc::UnboundedReceiver<DiagnosticRecord>,
 ) -> tokio::task::JoinHandle<()> {

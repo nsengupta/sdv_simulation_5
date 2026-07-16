@@ -16,7 +16,7 @@ use crate::vehicle_state::VehicleContext;
 use crate::vehicle_physics::{
     FRONT_HEADLAMP_ON_ACK_WAIT, RPM_DRIVING_THRESHOLD,
 };
-use crate::{PhysicalCarVocabulary, VehicleController, VssSignal};
+use crate::{TwinIngressEvent, VehicleController, VssSignal};
 use tokio::sync::mpsc;
 
 fn ctx_driving_in_dark() -> VehicleContext {
@@ -175,7 +175,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_
     let _ = rx.recv().await.expect("rpm row");
 
     controller
-        .submit_physical_car_event(PhysicalCarVocabulary::TelemetryUpdate(VssSignal::AmbientLux(
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
             20,
         )))
         .await
