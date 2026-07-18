@@ -1,9 +1,9 @@
 //! Contract tests for async VehicleController facade APIs.
 
 use crate::digital_twin::TwinMessage;
-use crate::twin_runtime::controller::virtual_car_actor::VirtualCarActor;
 use crate::fsm::{FsmEvent, FsmState};
-use crate::test::{power_off_to_off, power_on_to_idle, wait_fsm_state, ActorGuard};
+use crate::test::{ActorGuard, power_off_to_off, power_on_to_idle, wait_fsm_state};
+use crate::twin_runtime::controller::virtual_car_actor::VirtualCarActor;
 use crate::{TwinIngressEvent, VehicleController};
 use ractor::Actor;
 use std::time::Duration;
@@ -23,9 +23,9 @@ async fn given_twin_ingress_when_submitted_then_controller_drives_actor_state() 
     power_on_to_idle(&controller).await;
     crate::test::submit_daylight_ambient(&controller).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(
-            crate::VssSignal::EngineRpm(1500),
-        ))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(crate::VssSignal::EngineRpm(
+            1500,
+        )))
         .await
         .expect("twin ingress should enqueue");
 
@@ -96,7 +96,11 @@ async fn given_applied_events_when_get_snapshot_then_as_of_seq_counts_every_even
         .get_snapshot(Some(Duration::from_millis(250)))
         .await
         .expect("snapshot");
-    assert_eq!(after_power_on.as_of_seq(), 1, "PowerOn → PreparingToStart is seq 1");
+    assert_eq!(
+        after_power_on.as_of_seq(),
+        1,
+        "PowerOn → PreparingToStart is seq 1"
+    );
 
     // Phase 7: startup barrier drains for BOTH assemblies.
     //   seq 2: AssemblyZoneReady(Headlamp) → PreparingToStart (Wiper still pending)
@@ -106,13 +110,17 @@ async fn given_applied_events_when_get_snapshot_then_as_of_seq_counts_every_even
         .get_snapshot(Some(Duration::from_millis(250)))
         .await
         .expect("snapshot");
-    assert_eq!(after_idle.as_of_seq(), 3, "AssemblyZoneReady(Wiper) → Idle is seq 3");
+    assert_eq!(
+        after_idle.as_of_seq(),
+        3,
+        "AssemblyZoneReady(Wiper) → Idle is seq 3"
+    );
 
     // RPM in dark (default lux=0): zone hop (seq 4) + LightingUnsafe internal hop (seq 5).
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(
-            crate::VssSignal::EngineRpm(1500),
-        ))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(crate::VssSignal::EngineRpm(
+            1500,
+        )))
         .await
         .expect("telemetry should enqueue");
     let after_rpm = controller

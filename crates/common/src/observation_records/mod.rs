@@ -17,7 +17,7 @@
 pub mod diagnostic;
 pub mod transition;
 
-pub use diagnostic::{elapsed_since_session, DiagnosticLevel, DiagnosticRecord};
+pub use diagnostic::{DiagnosticLevel, DiagnosticRecord, elapsed_since_session};
 pub use transition::{
     PublishedDomainAction, PublishedFrontHeadlampIncompleteCause,
     PublishedFrontHeadlampSwitchDirection, PublishedFsmEvent, PublishedFsmState,

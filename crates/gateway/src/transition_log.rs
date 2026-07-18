@@ -109,15 +109,16 @@ mod tests {
         PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext,
         PublishedHeadlampState, PublishedHealthContext, PublishedPowertrainContext,
         PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext,
-        PublishedWheelRpm,
+        PublishedWheelRpm, UnixTimestamp,
     };
+    use std::time::Duration;
 
     fn sample_record() -> PublishedTransitionRecord {
         PublishedTransitionRecord {
             car_identity: "test-car".to_string(),
-            session_start_unix_nanos: 1,
+            session_started_at: UnixTimestamp::from_duration_since_epoch(Duration::from_nanos(1)),
             record_seq: 3,
-            recorded_at_unix: std::time::Duration::from_secs(100),
+            recorded_at: UnixTimestamp::from_duration_since_epoch(Duration::from_secs(100)),
             event: PublishedFsmEvent::UpdateAmbientLux(20),
             old_state: PublishedFsmState::Idle,
             next_state: PublishedFsmState::Driving,
@@ -146,7 +147,7 @@ mod tests {
             visibility: PublishedVisibilityContext { ambient_lux: 0 },
             headlamp: PublishedHeadlampContext {
                 state: PublishedHeadlampState::Off,
-                ack_pending_since_at_unix: None,
+                ack_pending_since: None,
             },
         }
     }

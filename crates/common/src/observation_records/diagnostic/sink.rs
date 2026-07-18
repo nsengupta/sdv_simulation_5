@@ -5,7 +5,7 @@ use crate::front_headlamp_log::{ACK_OFF, ACK_ON, MSG_ACK_OFF, MSG_ACK_ON};
 use crate::fsm::{FrontHeadlampSwitchDirection, FsmState};
 use crate::observation_records::transition::SessionClock;
 use crate::vehicle_physics::{
-    extreme_operation_active, speed_threshold_exceeded, SPEED_EXTREME_OPERATION_THRESHOLD_KPH,
+    SPEED_EXTREME_OPERATION_THRESHOLD_KPH, extreme_operation_active, speed_threshold_exceeded,
 };
 use crate::vehicle_state::VehicleContext;
 use tokio::sync::mpsc;
@@ -40,7 +40,9 @@ impl TokioMpscDiagnosticSink {
 
 impl DiagnosticSink for TokioMpscDiagnosticSink {
     fn try_emit(&self, record: DiagnosticRecord) -> Result<(), DiagnosticSinkError> {
-        self.tx.send(record).map_err(|_| DiagnosticSinkError::Closed)
+        self.tx
+            .send(record)
+            .map_err(|_| DiagnosticSinkError::Closed)
     }
 }
 
@@ -119,11 +121,7 @@ pub fn diag_actuation_failure(
 
 /// Warning surfaced from a `DomainAction::LogWarning` intent emitted by the pure step.
 pub fn diag_warning(clock: &SessionClock, identity: &str, message: &str) -> DiagnosticRecord {
-    DiagnosticRecord::warning(
-        clock,
-        "VirtualCarActor",
-        format!("[{identity}]: {message}"),
-    )
+    DiagnosticRecord::warning(clock, "VirtualCarActor", format!("[{identity}]: {message}"))
 }
 
 /// Info diagnostic surfaced when a front-headlamp command is **positively acknowledged**.

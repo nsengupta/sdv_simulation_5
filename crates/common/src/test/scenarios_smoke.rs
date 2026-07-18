@@ -1,11 +1,11 @@
 //! Black-box scenario smoke tests: actor lifecycle + state journeys.
 
 use crate::digital_twin::TwinMessage;
-use crate::twin_runtime::controller::virtual_car_actor::VirtualCarActor;
 use crate::fsm::{FsmEvent, FsmState};
-use crate::test::{power_on_to_idle, ActorGuard};
-use ractor::concurrency::Duration;
+use crate::test::{ActorGuard, power_on_to_idle};
+use crate::twin_runtime::controller::virtual_car_actor::VirtualCarActor;
 use ractor::Actor;
+use ractor::concurrency::Duration;
 
 /// Default timeout for [`get_snapshot`] and actor `call` in scenario tests.
 const DEFAULT_ACTOR_TIMEOUT: Duration = Duration::from_millis(250);
@@ -18,10 +18,7 @@ async fn get_snapshot(
     use ractor::rpc::CallResult;
 
     match actor
-        .call(
-            |port| TwinMessage::GetStatus(port),
-            Some(timeout),
-        )
+        .call(|port| TwinMessage::GetStatus(port), Some(timeout))
         .await
     {
         Ok(CallResult::Success(snapshot)) => snapshot,
@@ -105,7 +102,8 @@ async fn scenario_power_on_then_drive_rpm_enters_driving() {
 
     let car = get_snapshot(&actor, DEFAULT_ACTOR_TIMEOUT).await;
     assert_eq!(*car.current_state(), FsmState::Driving);
-    car.verify_all_invariants().expect("Safety breach on warmup");
+    car.verify_all_invariants()
+        .expect("Safety breach on warmup");
 }
 
 #[tokio::test]

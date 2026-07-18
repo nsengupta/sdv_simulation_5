@@ -1,12 +1,12 @@
+use super::virtual_car_actor::{VirtualCarActor, VirtualCarActorArgs};
 use crate::digital_twin::{CarSnapshot, TwinMessage};
-use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
-use crate::twin_runtime::connectors::{IngressToFsmProjector, Projector};
 use crate::fsm::FsmEvent;
 use crate::observation_records::transition::PublishedTransitionRecord;
+use crate::twin_runtime::connectors::{IngressToFsmProjector, Projector};
+use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
 use crate::{LifecycleCommand, TwinIngressEvent};
 use ractor::rpc::CallResult;
 use ractor::{ActorRef, MessagingErr, SpawnErr};
-use super::virtual_car_actor::{VirtualCarActor, VirtualCarActorArgs};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -27,7 +27,11 @@ pub enum VehicleControllerError {
 pub struct VehicleControllerRuntimeOptions {
     pub log_timer_tick: bool,
     pub actuation_command_tx: Option<tokio::sync::mpsc::Sender<ActuationCommand>>,
-    pub diagnostic_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::observation_records::diagnostic::DiagnosticRecord>>,
+    pub diagnostic_tx: Option<
+        tokio::sync::mpsc::UnboundedSender<
+            crate::observation_records::diagnostic::DiagnosticRecord,
+        >,
+    >,
     pub transition_tx: Option<tokio::sync::mpsc::Sender<PublishedTransitionRecord>>,
     /// Contract tests: headlamp twinlet ignores tells (exercises tell-back timeout path).
     #[doc(hidden)]
@@ -140,10 +144,10 @@ impl VehicleController {
         &self,
         timeout: Option<Duration>,
     ) -> Result<CarSnapshot, VehicleControllerError> {
-        let result: Result<CallResult<CarSnapshot>, MessagingErr<TwinMessage>> =
-            self.actor
-                .call(|port| TwinMessage::GetStatus(port), timeout)
-                .await;
+        let result: Result<CallResult<CarSnapshot>, MessagingErr<TwinMessage>> = self
+            .actor
+            .call(|port| TwinMessage::GetStatus(port), timeout)
+            .await;
 
         match result.map_err(|e| VehicleControllerError::Messaging(format!("{e}")))? {
             CallResult::Success(snapshot) => Ok(snapshot),

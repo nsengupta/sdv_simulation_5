@@ -130,7 +130,12 @@ use tokio::sync::mpsc;
 /// No manual injection required.
 pub async fn power_on_to_idle(controller: &VehicleController) {
     controller.send_power_on().await.expect("power on");
-    wait_fsm_state(controller, FsmState::Idle, std::time::Duration::from_millis(500)).await;
+    wait_fsm_state(
+        controller,
+        FsmState::Idle,
+        std::time::Duration::from_millis(500),
+    )
+    .await;
 }
 
 /// Power off and wait for `Off` via the `StopAssemblies` barrier.
@@ -142,7 +147,12 @@ pub async fn power_on_to_idle(controller: &VehicleController) {
 /// No manual injection required.
 pub async fn power_off_to_off(controller: &VehicleController) {
     controller.send_power_off().await.expect("power off");
-    wait_fsm_state(controller, FsmState::Off, std::time::Duration::from_millis(500)).await;
+    wait_fsm_state(
+        controller,
+        FsmState::Off,
+        std::time::Duration::from_millis(500),
+    )
+    .await;
 }
 
 /// Bright ambient so operational driving tests do not synthesize `LightingUnsafe` on entry.

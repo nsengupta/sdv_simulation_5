@@ -28,41 +28,41 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::digital_twin::{CarSnapshot, DigitalTwinCar, TwinMessage, ZoneMessage, ZoneReply};
+use crate::fsm::{
+    self, AssemblyId, DomainAction, FrontHeadlampSwitchDirection, FsmEvent, FsmState, HeadlampState,
+};
 use crate::observation_records::diagnostic::DiagnosticRecord;
 use crate::observation_records::diagnostic::sink::{
-    DiagnosticSink, TokioMpscDiagnosticSink, diag_actuation_failure,
-    diag_front_headlamp_confirmed, diag_state_transition, diag_timer_tick, diag_warning,
-    diag_transition_sink_full, diag_transition_sink_closed,
+    DiagnosticSink, TokioMpscDiagnosticSink, diag_actuation_failure, diag_front_headlamp_confirmed,
+    diag_state_transition, diag_timer_tick, diag_transition_sink_closed, diag_transition_sink_full,
+    diag_warning,
 };
-use crate::digital_twin::{CarSnapshot, DigitalTwinCar, TwinMessage, ZoneMessage, ZoneReply};
+use crate::observation_records::transition::sink::{
+    TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
+};
+use crate::observation_records::transition::{PublishedTransitionRecord, SessionClock};
+use crate::twin_runtime::ZoneReplies;
 use crate::twin_runtime::constants::ZONE_TELL_BACK_WAIT;
 use crate::twin_runtime::controller::actuation_manager::{
     ActuationManager, DefaultActuationManager,
 };
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
-use crate::fsm::{
-    self, AssemblyId, DomainAction, FrontHeadlampSwitchDirection, FsmEvent, FsmState, HeadlampState,
-};
 use crate::twin_runtime::headlamp_actor::{
-    tell_headlamp_zone, HeadlampActor, HeadlampActorMsg, HeadlampActorState,
+    HeadlampActor, HeadlampActorMsg, HeadlampActorState, tell_headlamp_zone,
 };
-use crate::twin_runtime::wiper_actor::{
-    tell_wiper_zone, WiperActor, WiperActorMsg, WiperActorState,
-};
-use crate::twin_runtime::twin_turn::{commit_resolved_turn as resolve_quiescence, ResolvedTurn};
-use crate::twin_runtime::ZoneReplies;
-use crate::twin_runtime::zone_tell_back::{
-    synthetic_unresponsive_headlamp_reply, synthetic_unresponsive_wiper_reply, TellBackWait,
-};
-use crate::twin_runtime::zone_turn::zone_message_for_event;
 use crate::twin_runtime::turn_barrier::{
     BarrierEntry, PassthroughBarrier, TellBackTimer, TimeoutOutcome, TurnBarrier,
 };
-use crate::vehicle_state::{HeadlampMessage, WiperMessage, VehicleContext};
-use crate::observation_records::transition::{PublishedTransitionRecord, SessionClock};
-use crate::observation_records::transition::sink::{
-    TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
+use crate::twin_runtime::twin_turn::{ResolvedTurn, commit_resolved_turn as resolve_quiescence};
+use crate::twin_runtime::wiper_actor::{
+    WiperActor, WiperActorMsg, WiperActorState, tell_wiper_zone,
 };
+use crate::twin_runtime::zone_tell_back::{
+    TellBackWait, synthetic_unresponsive_headlamp_reply, synthetic_unresponsive_wiper_reply,
+};
+use crate::twin_runtime::zone_turn::zone_message_for_event;
+use crate::vehicle_state::{HeadlampMessage, VehicleContext, WiperMessage};
 
 /// The Digital Twin Actor
 pub struct VirtualCarActor;
@@ -87,7 +87,6 @@ impl From<&str> for VirtualCarActorArgs {
         Self::from(identity.to_string())
     }
 }
-
 
 /// Mutable state of the virtual car actor, held across `handle` calls.
 pub struct VirtualCarRuntimeState {
@@ -155,11 +154,10 @@ impl Actor for VirtualCarActor {
             .clone()
             .map(|tx| Arc::new(TokioMpscDiagnosticSink::new(tx)) as Arc<dyn DiagnosticSink>);
 
-        let transition_sink: Option<Arc<dyn TransitionRecordSink>> = args
-            .runtime_options
-            .transition_tx
-            .clone()
-            .map(|tx| Arc::new(TokioMpscTransitionRecordSink::new(tx)) as Arc<dyn TransitionRecordSink>);
+        let transition_sink: Option<Arc<dyn TransitionRecordSink>> =
+            args.runtime_options.transition_tx.clone().map(|tx| {
+                Arc::new(TokioMpscTransitionRecordSink::new(tx)) as Arc<dyn TransitionRecordSink>
+            });
 
         let session_clock = SessionClock::capture();
 
@@ -173,12 +171,9 @@ impl Actor for VirtualCarActor {
 
         let actuation_manager: Arc<dyn ActuationManager> =
             if let Some(tx) = args.runtime_options.actuation_command_tx.clone() {
-                let session_id = session_clock.session_start_unix_nanos() as u64;
-                let manager = DefaultActuationManager::with_command_channel(
-                    identity.clone(),
-                    session_id,
-                    tx,
-                );
+                let session_id = session_clock.session_started_at().unix_seconds();
+                let manager =
+                    DefaultActuationManager::with_command_channel(identity.clone(), session_id, tx);
                 Arc::new(manager)
             } else {
                 Arc::new(DefaultActuationManager::default())
@@ -231,7 +226,9 @@ impl Actor for VirtualCarActor {
                 {
                     return Ok(());
                 }
-                if matches!(evt_arrived, FsmEvent::TimerTick) && runtime_state.runtime_options.log_timer_tick {
+                if matches!(evt_arrived, FsmEvent::TimerTick)
+                    && runtime_state.runtime_options.log_timer_tick
+                {
                     if let Some(sink) = &runtime_state.diagnostic_sink {
                         let _ = sink.try_emit(diag_timer_tick(
                             &runtime_state.session_clock,
@@ -295,14 +292,14 @@ impl VirtualCarActor {
     fn become_on_message_for(assembly_id: AssemblyId) -> ZoneMessage {
         match assembly_id {
             AssemblyId::Headlamp => ZoneMessage::Headlamp(HeadlampMessage::BecomeOn),
-            AssemblyId::Wiper    => ZoneMessage::Wiper(WiperMessage::BecomeOn),
+            AssemblyId::Wiper => ZoneMessage::Wiper(WiperMessage::BecomeOn),
         }
     }
 
     fn become_off_message_for(assembly_id: AssemblyId) -> ZoneMessage {
         match assembly_id {
             AssemblyId::Headlamp => ZoneMessage::Headlamp(HeadlampMessage::BecomeOff),
-            AssemblyId::Wiper    => ZoneMessage::Wiper(WiperMessage::BecomeOff),
+            AssemblyId::Wiper => ZoneMessage::Wiper(WiperMessage::BecomeOff),
         }
     }
 
@@ -317,22 +314,30 @@ impl VirtualCarActor {
     ) -> Result<(), ActorProcessingErr> {
         match message {
             ZoneMessage::Headlamp(m) => tell_headlamp_zone(
-                &runtime_state.headlamp_actor, brain, turn_id, tell_attempt, *m, now,
+                &runtime_state.headlamp_actor,
+                brain,
+                turn_id,
+                tell_attempt,
+                *m,
+                now,
             ),
             ZoneMessage::Wiper(m) => tell_wiper_zone(
-                &runtime_state.wiper_actor, brain, turn_id, tell_attempt, *m, now,
+                &runtime_state.wiper_actor,
+                brain,
+                turn_id,
+                tell_attempt,
+                *m,
+                now,
             ),
         }
     }
 
     fn synthetic_reply_for(ctx: &VehicleContext, assembly_id: AssemblyId) -> ZoneReply {
         match assembly_id {
-            AssemblyId::Headlamp => ZoneReply::Headlamp(
-                synthetic_unresponsive_headlamp_reply(&ctx.headlamp)
-            ),
-            AssemblyId::Wiper => ZoneReply::Wiper(
-                synthetic_unresponsive_wiper_reply(&ctx.wiper)
-            ),
+            AssemblyId::Headlamp => {
+                ZoneReply::Headlamp(synthetic_unresponsive_headlamp_reply(&ctx.headlamp))
+            }
+            AssemblyId::Wiper => ZoneReply::Wiper(synthetic_unresponsive_wiper_reply(&ctx.wiper)),
         }
     }
 
@@ -344,14 +349,13 @@ impl VirtualCarActor {
         turn_id: u64,
         tell_attempt: u32,
     ) -> TellBackTimer {
-        brain.send_after(
-            RactorDuration::from(ZONE_TELL_BACK_WAIT),
-            move || TwinMessage::ZoneTellBackTimeout {
+        brain.send_after(RactorDuration::from(ZONE_TELL_BACK_WAIT), move || {
+            TwinMessage::ZoneTellBackTimeout {
                 zone_id,
                 turn_id,
                 tell_attempt,
-            },
-        )
+            }
+        })
     }
 
     // ── FSM turn entry ────────────────────────────────────────────────────────
@@ -385,13 +389,17 @@ impl VirtualCarActor {
             let timer = Self::arm_tell_back_timer(brain, zone_id, turn_id, 0);
             let mut barrier = TurnBarrier::new(turn_id, event, now);
             barrier.add_pending_zone(zone_id, message, wait, timer);
-            runtime_state.barrier_queue.push_back(BarrierEntry::Waiting(barrier));
+            runtime_state
+                .barrier_queue
+                .push_back(BarrierEntry::Waiting(barrier));
             return Ok(());
         }
 
         // Passthrough: no zone message for this event in the current state.
         let passthrough = PassthroughBarrier::new(turn_id, event, now);
-        runtime_state.barrier_queue.push_back(BarrierEntry::Passthrough(passthrough));
+        runtime_state
+            .barrier_queue
+            .push_back(BarrierEntry::Passthrough(passthrough));
         Ok(())
     }
 
@@ -465,7 +473,15 @@ impl VirtualCarActor {
                         ))
                     })?;
 
-                Self::tell_zone(runtime_state, brain, zone_id, &msg, turn_id, next_attempt, barrier_now)?;
+                Self::tell_zone(
+                    runtime_state,
+                    brain,
+                    zone_id,
+                    &msg,
+                    turn_id,
+                    next_attempt,
+                    barrier_now,
+                )?;
                 let new_timer = Self::arm_tell_back_timer(brain, zone_id, turn_id, next_attempt);
 
                 if let Some(entry) = runtime_state
@@ -480,7 +496,8 @@ impl VirtualCarActor {
             }
             TimeoutOutcome::GaveUp => {
                 // Synthesise a reply from current context (no intermediate mutable borrow).
-                let synthetic = Self::synthetic_reply_for(runtime_state.twin_car.context(), zone_id);
+                let synthetic =
+                    Self::synthetic_reply_for(runtime_state.twin_car.context(), zone_id);
                 if let Some(entry) = runtime_state
                     .barrier_queue
                     .iter_mut()
@@ -502,7 +519,7 @@ impl VirtualCarActor {
     /// `barrier_queue`.  The event is committed directly; the drain loop runs afterwards.
     async fn on_zone_spontaneous(
         runtime_state: &mut VirtualCarRuntimeState,
-        _assembly_id: AssemblyId,   // headlamp-only; wiper has no spontaneous events
+        _assembly_id: AssemblyId, // headlamp-only; wiper has no spontaneous events
         event: crate::digital_twin::ZoneSpontaneousEvent,
     ) -> Result<(), ActorProcessingErr> {
         let crate::digital_twin::ZoneSpontaneousEvent::Headlamp {
@@ -515,7 +532,10 @@ impl VirtualCarActor {
             ResolvedTurn {
                 ingress: FsmEvent::FrontHeadlampActuationIncomplete { direction, cause },
                 now: Instant::now(),
-                zone_replies: ZoneReplies::with_reply(AssemblyId::Headlamp, ZoneReply::Headlamp(reply)),
+                zone_replies: ZoneReplies::with_reply(
+                    AssemblyId::Headlamp,
+                    ZoneReply::Headlamp(reply),
+                ),
             },
         )
         .await
@@ -536,7 +556,10 @@ impl VirtualCarActor {
             if !front.is_complete() {
                 break;
             }
-            let committed = runtime_state.barrier_queue.pop_front().expect("checked above");
+            let committed = runtime_state
+                .barrier_queue
+                .pop_front()
+                .expect("checked above");
             let resolved = committed.into_resolved_turn();
             Self::commit_resolved_turn(runtime_state, resolved).await?;
         }
@@ -569,7 +592,11 @@ impl VirtualCarActor {
         for hop in &quiescent.hops {
             let record_seq = runtime_state.next_record_seq;
             runtime_state.next_record_seq = runtime_state.next_record_seq.saturating_add(1);
-            Self::try_emit_transition_record(runtime_state, record_seq, hop.result.transition_record.clone());
+            Self::try_emit_transition_record(
+                runtime_state,
+                record_seq,
+                hop.result.transition_record.clone(),
+            );
         }
 
         runtime_state.twin_car.apply_step(
@@ -597,8 +624,17 @@ impl VirtualCarActor {
                         let wait = TellBackWait::new(turn_id);
                         Self::tell_zone(runtime_state, &brain, assembly_id, &msg, turn_id, 0, now)?;
                         let timer = Self::arm_tell_back_timer(&brain, assembly_id, turn_id, 0);
-                        let barrier = TurnBarrier::new_for_assembly_zone(turn_id, assembly_id, msg, wait, timer, now);
-                        runtime_state.barrier_queue.push_back(BarrierEntry::Waiting(barrier));
+                        let barrier = TurnBarrier::new_for_assembly_zone(
+                            turn_id,
+                            assembly_id,
+                            msg,
+                            wait,
+                            timer,
+                            now,
+                        );
+                        runtime_state
+                            .barrier_queue
+                            .push_back(BarrierEntry::Waiting(barrier));
                     }
                 }
                 DomainAction::StopAssemblies(assemblies) => {
@@ -610,8 +646,17 @@ impl VirtualCarActor {
                         let wait = TellBackWait::new(turn_id);
                         Self::tell_zone(runtime_state, &brain, assembly_id, &msg, turn_id, 0, now)?;
                         let timer = Self::arm_tell_back_timer(&brain, assembly_id, turn_id, 0);
-                        let barrier = TurnBarrier::new_for_assembly_zone(turn_id, assembly_id, msg, wait, timer, now);
-                        runtime_state.barrier_queue.push_back(BarrierEntry::Waiting(barrier));
+                        let barrier = TurnBarrier::new_for_assembly_zone(
+                            turn_id,
+                            assembly_id,
+                            msg,
+                            wait,
+                            timer,
+                            now,
+                        );
+                        runtime_state
+                            .barrier_queue
+                            .push_back(BarrierEntry::Waiting(barrier));
                     }
                 }
                 other_action => {
@@ -644,7 +689,8 @@ impl VirtualCarActor {
             }
         }
 
-        if let Some(direction) = front_headlamp_confirmed_direction(headlamp_before, headlamp_after) {
+        if let Some(direction) = front_headlamp_confirmed_direction(headlamp_before, headlamp_after)
+        {
             if let Some(sink) = &runtime_state.diagnostic_sink {
                 let _ = sink.try_emit(diag_front_headlamp_confirmed(
                     &runtime_state.session_clock,
@@ -718,7 +764,9 @@ fn front_headlamp_confirmed_direction(
 ) -> Option<FrontHeadlampSwitchDirection> {
     match (before, after) {
         (HeadlampState::OnRequested, HeadlampState::On) => Some(FrontHeadlampSwitchDirection::On),
-        (HeadlampState::OffRequested, HeadlampState::Ready) => Some(FrontHeadlampSwitchDirection::Off),
+        (HeadlampState::OffRequested, HeadlampState::Ready) => {
+            Some(FrontHeadlampSwitchDirection::Off)
+        }
         _ => None,
     }
 }

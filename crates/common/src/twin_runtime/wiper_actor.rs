@@ -129,8 +129,6 @@ pub fn tell_wiper_zone(
             brain: brain.clone(),
         }))
         .map_err(|e| {
-            ActorProcessingErr::from(std::io::Error::other(format!(
-                "tell_wiper_zone: {e:?}"
-            )))
+            ActorProcessingErr::from(std::io::Error::other(format!("tell_wiper_zone: {e:?}")))
         })
 }

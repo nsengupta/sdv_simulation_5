@@ -8,10 +8,10 @@ use std::time::Instant;
 use crate::digital_twin::TwinMessage;
 use crate::fsm::HeadlampState;
 use crate::observation_records::transition::{PublishedHeadlampContext, PublishedHeadlampState};
-use crate::test::{expect_actuation_command, inject_matching_ack, power_on_to_idle, ActorGuard};
+use crate::test::{ActorGuard, expect_actuation_command, inject_matching_ack, power_on_to_idle};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_state::{HeadlampContext, HeadlampMessage};
-use crate::{TwinIngressEvent, PublishedFsmEvent, VehicleController, VssSignal};
+use crate::{PublishedFsmEvent, TwinIngressEvent, VehicleController, VssSignal};
 use ractor::concurrency::Duration;
 use tokio::sync::mpsc;
 
@@ -27,7 +27,7 @@ fn assert_published_headlamp_matches_runtime(
         "ledger headlamp.state must match persisted runtime snapshot"
     );
     assert_eq!(
-        published.ack_pending_since_at_unix.is_some(),
+        published.ack_pending_since.is_some(),
         runtime.ack_pending_since.is_some(),
         "ledger ACK-wait presence must match runtime (temporal anchor may differ in wall projection)"
     );
@@ -35,9 +35,16 @@ fn assert_published_headlamp_matches_runtime(
 
 fn expected_headlamp_after_on_ack_journey(now: Instant) -> HeadlampContext {
     // Starting in Ready (assembly active, lamp dark) — the post-Phase-2 baseline.
-    let ctx = HeadlampContext { state: HeadlampState::Ready, ack_pending_since: None };
-    let after_lux = ctx.on_receiving_message(HeadlampMessage::AmbientLux(20), now).ctx;
-    after_lux.on_receiving_message(HeadlampMessage::AckOn, now).ctx
+    let ctx = HeadlampContext {
+        state: HeadlampState::Ready,
+        ack_pending_since: None,
+    };
+    let after_lux = ctx
+        .on_receiving_message(HeadlampMessage::AmbientLux(20), now)
+        .ctx;
+    after_lux
+        .on_receiving_message(HeadlampMessage::AckOn, now)
+        .ctx
 }
 
 #[tokio::test]
@@ -70,12 +77,13 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
     power_on_to_idle(&controller).await;
     let _power_on_record = rx.recv().await.expect("ledger row for power on");
     let _ = rx.recv().await.expect("ledger row for headlamp zone ready");
-    let _ = rx.recv().await.expect("ledger row for wiper zone ready → idle");
+    let _ = rx
+        .recv()
+        .await
+        .expect("ledger row for wiper zone ready → idle");
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux");
 
@@ -86,12 +94,11 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
         PublishedHeadlampState::OnRequested,
     );
     assert!(
-        lux_record.current_ctx.headlamp.ack_pending_since_at_unix.is_some(),
+        lux_record.current_ctx.headlamp.ack_pending_since.is_some(),
         "ON request should leave ACK-wait in ledger current_ctx"
     );
 
-    let command =
-        expect_actuation_command(&mut actuation_rx, Duration::from_millis(250)).await;
+    let command = expect_actuation_command(&mut actuation_rx, Duration::from_millis(250)).await;
     inject_matching_ack(&controller, &command).await;
 
     let ack_record = rx.recv().await.expect("ledger row for ON ack");
@@ -101,7 +108,7 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
         PublishedHeadlampState::On,
     );
     assert!(
-        ack_record.current_ctx.headlamp.ack_pending_since_at_unix.is_none(),
+        ack_record.current_ctx.headlamp.ack_pending_since.is_none(),
         "settled ON must clear ACK-wait in ledger"
     );
 
@@ -152,14 +159,14 @@ async fn given_power_on_only_when_get_status_then_ledger_headlamp_matches_embed(
     power_on_to_idle(&controller).await;
     let _power_on_record = rx.recv().await.expect("ledger row for power on");
     let _ = rx.recv().await.expect("ledger row for headlamp zone ready");
-    let wiper_ready_record = rx.recv().await.expect("ledger row for wiper zone ready → idle");
+    let wiper_ready_record = rx
+        .recv()
+        .await
+        .expect("ledger row for wiper zone ready → idle");
     assert_eq!(_power_on_record.event, PublishedFsmEvent::PowerOn);
 
     let snapshot = actor_ref
-        .call(
-            |port| TwinMessage::GetStatus(port),
-            Some(ACTOR_TIMEOUT),
-        )
+        .call(|port| TwinMessage::GetStatus(port), Some(ACTOR_TIMEOUT))
         .await
         .expect("GetStatus call")
         .expect("GetStatus reply");

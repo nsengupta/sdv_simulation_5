@@ -14,8 +14,8 @@
 //! ADR-2 / ADR-3 / Q6 in `docs/design-notes-runtime-observation.md`.
 
 use crate::fsm::FsmState;
-use crate::vehicle_state::VehicleContext;
 use crate::vehicle_physics::RPM_DRIVING_THRESHOLD;
+use crate::vehicle_state::VehicleContext;
 
 /// A single state law: a stable name plus a pure predicate on `(state, ctx)`.
 ///
@@ -84,8 +84,7 @@ fn law_kinetic_locking_holds(state: &FsmState, ctx: &VehicleContext) -> Result<(
 /// 2. Dual of Idle→Driving: [`FsmState::Driving`] implies RPM strictly above
 /// [`RPM_DRIVING_THRESHOLD`] (same constant as `transition_map`).
 fn law_rpm_above_threshold_holds(state: &FsmState, ctx: &VehicleContext) -> Result<(), String> {
-    if *state == FsmState::Driving && ctx.powertrain.wheel_rpm.front_left <= RPM_DRIVING_THRESHOLD
-    {
+    if *state == FsmState::Driving && ctx.powertrain.wheel_rpm.front_left <= RPM_DRIVING_THRESHOLD {
         return Err(format!(
             "Logic Breach: State is Driving but RPM is <= {RPM_DRIVING_THRESHOLD}"
         ));

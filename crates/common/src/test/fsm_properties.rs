@@ -3,10 +3,10 @@
 use proptest::prelude::*;
 use std::time::{Duration, Instant};
 
-use crate::fsm::{transition, DomainAction, FsmEvent, FsmState, HeadlampState};
+use crate::fsm::{DomainAction, FsmEvent, FsmState, HeadlampState, transition};
 use crate::twin_runtime::twin_turn;
-use crate::vehicle_state::VehicleContext;
 use crate::vehicle_physics::{LUX_OFF_THRESHOLD, LUX_ON_THRESHOLD};
+use crate::vehicle_state::VehicleContext;
 
 fn ctx_with_rpm(rpm: u16) -> VehicleContext {
     let mut ctx = VehicleContext::default();
@@ -49,7 +49,9 @@ fn arb_fsm_state() -> impl Strategy<Value = FsmState> {
         Just(FsmState::Driving),
         Just(FsmState::DrivingDangerously),
         any::<u64>().prop_map(|n| {
-            FsmState::ExtremeOperationWarning(Instant::now() - Duration::from_nanos(1 + (n % 1_000_000_000)))
+            FsmState::ExtremeOperationWarning(
+                Instant::now() - Duration::from_nanos(1 + (n % 1_000_000_000)),
+            )
         }),
     ]
 }

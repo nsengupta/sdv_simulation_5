@@ -29,14 +29,14 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
+use crate::VehicleController;
 use crate::digital_twin::{TwinMessage, ZoneReply};
-use crate::fsm::{FsmEvent, FsmState, HeadlampState, AssemblyId};
+use crate::fsm::{AssemblyId, FsmEvent, FsmState, HeadlampState};
 use crate::observation_records::transition::{PublishedDomainAction, PublishedTransitionRecord};
 use crate::test::ActorGuard;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_physics::LUX_ON_THRESHOLD;
 use crate::vehicle_state::{HeadlampContext, HeadlampZoneReply};
-use crate::VehicleController;
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -163,7 +163,12 @@ async fn boot_silent(
     inject_zone_ready(controller, STARTUP_BARRIER_TURN, HeadlampState::Ready);
     // Wiper (turn 3) is non-silent and auto-replies.
     let _ = WIPER_STARTUP_BARRIER_TURN; // documented for clarity
-    crate::test::wait_fsm_state(controller, FsmState::Idle, std::time::Duration::from_millis(500)).await;
+    crate::test::wait_fsm_state(
+        controller,
+        FsmState::Idle,
+        std::time::Duration::from_millis(500),
+    )
+    .await;
     // Phase 7: drain THREE ledger rows: PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
     drain_n(rx, 3, std::time::Duration::from_secs(3)).await;
 }
@@ -216,7 +221,10 @@ async fn two_zone_directed_events_commit_in_arrival_order() {
     );
     // RED assertion: Phase 4 → injected reply (no LogWarning); Phase 3 → synthetic (LogWarning).
     assert!(
-        rows[1].actions.iter().all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
+        rows[1]
+            .actions
+            .iter()
+            .all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
         "rear barrier must commit with real reply (no LogWarning), got {:?}",
         rows[1].actions
     );
@@ -264,7 +272,10 @@ async fn three_events_drain_in_arrival_order_when_zone_replies_arrive_out_of_ord
     assert!(rows[1].record_seq < rows[2].record_seq);
     // RED assertion: turn 4 (rows[1]) must use the real reply, not a synthetic.
     assert!(
-        rows[1].actions.iter().all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
+        rows[1]
+            .actions
+            .iter()
+            .all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
         "turn-4 barrier must commit with real reply (no LogWarning), got {:?}",
         rows[1].actions
     );
@@ -316,7 +327,10 @@ async fn exhausted_front_barrier_unblocks_rear_with_stored_reply() {
     assert!(rows[0].record_seq < rows[1].record_seq);
     // RED assertion: rows[1] must use real reply (no LogWarning).
     assert!(
-        rows[1].actions.iter().all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
+        rows[1]
+            .actions
+            .iter()
+            .all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
         "rear barrier must use stored real reply (no LogWarning), got {:?}",
         rows[1].actions
     );
@@ -366,7 +380,10 @@ async fn second_zone_reply_before_first_does_not_drain_anything_prematurely() {
     assert!(rows[0].record_seq < rows[1].record_seq);
     // RED assertion: real reply stored for turn 4 → no LogWarning in rows[1].
     assert!(
-        rows[1].actions.iter().all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
+        rows[1]
+            .actions
+            .iter()
+            .all(|a| !matches!(a, PublishedDomainAction::LogWarning(_))),
         "turn-4 must commit with stored real reply (no LogWarning), got {:?}",
         rows[1].actions
     );

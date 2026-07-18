@@ -181,20 +181,18 @@ fn maybe_arm_ack_timer(myself: &ActorRef<HeadlampActorMsg>, state: &mut Headlamp
         return;
     }
     let (direction, wait) = match state.ctx.state {
-        HeadlampState::OnRequested => (
-            FrontHeadlampSwitchDirection::On,
-            FRONT_HEADLAMP_ON_ACK_WAIT,
-        ),
+        HeadlampState::OnRequested => {
+            (FrontHeadlampSwitchDirection::On, FRONT_HEADLAMP_ON_ACK_WAIT)
+        }
         HeadlampState::OffRequested => (
             FrontHeadlampSwitchDirection::Off,
             FRONT_HEADLAMP_OFF_ACK_WAIT,
         ),
         _ => return,
     };
-    state.ack_timer = Some(myself.send_after(
-        RactorDuration::from(wait),
-        move || HeadlampActorMsg::AckWaitElapsed { direction },
-    ));
+    state.ack_timer = Some(myself.send_after(RactorDuration::from(wait), move || {
+        HeadlampActorMsg::AckWaitElapsed { direction }
+    }));
 }
 
 /// Fire-and-forget tell to the headlamp twinlet (no reply port on this hop).
@@ -215,8 +213,6 @@ pub fn tell_headlamp_zone(
             brain: brain.clone(),
         }))
         .map_err(|e| {
-            ActorProcessingErr::from(std::io::Error::other(format!(
-                "tell_headlamp_zone: {e:?}"
-            )))
+            ActorProcessingErr::from(std::io::Error::other(format!("tell_headlamp_zone: {e:?}")))
         })
 }

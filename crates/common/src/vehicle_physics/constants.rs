@@ -24,12 +24,10 @@ pub const RPM_EXTREME_OPERATION_THRESHOLD: u16 = 5500;
 pub const SPEED_EXTREME_OPERATION_THRESHOLD_KPH: u16 = 160;
 
 /// Log text when derived speed alone exceeds the commuter threshold.
-pub const SPEED_THRESHOLD_WARNING_MESSAGE: &str =
-    "SpeedThresholdExceeded: ground speed > 160 km/h";
+pub const SPEED_THRESHOLD_WARNING_MESSAGE: &str = "SpeedThresholdExceeded: ground speed > 160 km/h";
 
 /// Log text when both speed and RPM indicate sustained extreme operation.
-pub const EXTREME_OPERATION_WARNING_MESSAGE: &str =
-    "ExtremeOperationWarning: speed > 160 km/h and RPM > 5500 (redline / thermal or oil stress risk)";
+pub const EXTREME_OPERATION_WARNING_MESSAGE: &str = "ExtremeOperationWarning: speed > 160 km/h and RPM > 5500 (redline / thermal or oil stress risk)";
 
 /// Request headlamp ON when ambient lux falls to or below this value (dim / tunnel).
 /// Pair with [`LUX_OFF_THRESHOLD`] and emulator jitter (~815–885 lux) for demo ON/OFF cycles.

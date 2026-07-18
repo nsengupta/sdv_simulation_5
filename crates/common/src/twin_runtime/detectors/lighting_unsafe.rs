@@ -24,7 +24,10 @@ pub fn lighting_unsafe_detector(
     if exit_ctx.visibility.ambient_lux > LUX_ON_THRESHOLD {
         return None;
     }
-    if !matches!(exit_ctx.headlamp.state, HeadlampState::Off | HeadlampState::Ready) {
+    if !matches!(
+        exit_ctx.headlamp.state,
+        HeadlampState::Off | HeadlampState::Ready
+    ) {
         return None;
     }
     Some(FsmEvent::Internal(Operational::LightingUnsafe))
@@ -107,7 +110,8 @@ mod tests {
         }
         let ctx = ctx_at(20, HeadlampState::Off);
         assert!(
-            lighting_unsafe_detector(&FsmState::ExtremeOperationWarning(Instant::now()), &ctx).is_none()
+            lighting_unsafe_detector(&FsmState::ExtremeOperationWarning(Instant::now()), &ctx)
+                .is_none()
         );
     }
 

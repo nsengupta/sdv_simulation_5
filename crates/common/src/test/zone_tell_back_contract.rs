@@ -1,13 +1,14 @@
 //! Unit tests for tell-back retry / synthetic embed policy.
 
 use crate::fsm::DomainAction;
+use crate::fsm::{FsmEvent, FsmState};
 use crate::twin_runtime::constants::ZONE_TELL_BACK_MAX_RETRIES;
 use crate::twin_runtime::zone_tell_back::{
-    on_tell_back_timeout, synthetic_unresponsive_headlamp_reply, TellBackTimeoutOutcome, TellBackWait,
+    TellBackTimeoutOutcome, TellBackWait, on_tell_back_timeout,
+    synthetic_unresponsive_headlamp_reply,
 };
-use crate::twin_runtime::{commit_resolved_turn, ResolvedTurn, ZoneReplies};
+use crate::twin_runtime::{ResolvedTurn, ZoneReplies, commit_resolved_turn};
 use crate::vehicle_state::{HeadlampContext, HeadlampOutcome};
-use crate::fsm::{FsmEvent, FsmState};
 use std::time::Instant;
 
 #[test]
@@ -71,9 +72,10 @@ fn driving_ctx() -> crate::vehicle_state::VehicleContext {
 }
 
 #[tokio::test]
-async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unresponsive_warning() {
+async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unresponsive_warning()
+{
     use crate::digital_twin::{TwinMessage, ZoneReply};
-    use crate::fsm::{FsmEvent, FsmState, HeadlampState, AssemblyId};
+    use crate::fsm::{AssemblyId, FsmEvent, FsmState, HeadlampState};
     use crate::test::ActorGuard;
     use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_WAIT};
     use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
@@ -110,12 +112,20 @@ async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unr
             turn_id: 2, // startup barrier is always turn 2 (PowerOn=1, StartAssemblies barrier=2)
             tell_attempt: 0,
             reply: ZoneReply::Headlamp(HeadlampZoneReply {
-                ctx: HeadlampContext { state: HeadlampState::Ready, ack_pending_since: None },
+                ctx: HeadlampContext {
+                    state: HeadlampState::Ready,
+                    ack_pending_since: None,
+                },
                 outcomes: vec![],
             }),
         })
         .expect("inject startup zone ready");
-    crate::test::wait_fsm_state(&controller, FsmState::Idle, std::time::Duration::from_millis(500)).await;
+    crate::test::wait_fsm_state(
+        &controller,
+        FsmState::Idle,
+        std::time::Duration::from_millis(500),
+    )
+    .await;
     // Phase 7: drain THREE startup ledger rows:
     //   PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
     // Wiper is non-silent (default) so it auto-replies to its BecomeOn barrier (turn 3).

@@ -85,7 +85,9 @@ impl VssSignal {
         };
 
         let data = frame.data();
-        if data.len() < 2 { return None; }
+        if data.len() < 2 {
+            return None;
+        }
 
         match id {
             ID_SPEED => {
@@ -100,9 +102,7 @@ impl VssSignal {
                 let raw = u16::from_be_bytes([data[0], data[1]]);
                 Some(Self::AmbientLux(raw))
             }
-            ID_RAIN_DETECTED => {
-                Some(Self::RainDetected(data[0] != 0))
-            }
+            ID_RAIN_DETECTED => Some(Self::RainDetected(data[0] != 0)),
             _ => None,
         }
     }
@@ -136,12 +136,8 @@ impl VssSignal {
                 let scaled = (val * 100.0) as u16;
                 build_frame(ID_SPEED, &scaled.to_be_bytes())
             }
-            Self::EngineRpm(val) => {
-                build_frame(ID_RPM, &val.to_be_bytes())
-            }
-            Self::AmbientLux(val) => {
-                build_frame(ID_AMBIENT_LUX, &val.to_be_bytes())
-            }
+            Self::EngineRpm(val) => build_frame(ID_RPM, &val.to_be_bytes()),
+            Self::AmbientLux(val) => build_frame(ID_AMBIENT_LUX, &val.to_be_bytes()),
             Self::RainDetected(val) => {
                 // Byte 0: 0x01 = rain, 0x00 = no rain. Byte 1: reserved zero.
                 build_frame(ID_RAIN_DETECTED, &[*val as u8, 0])

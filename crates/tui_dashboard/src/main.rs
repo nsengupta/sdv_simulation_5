@@ -7,15 +7,17 @@
 //! Only **`q`** / Esc quit the dashboard. Lifecycle (PowerOn/PowerOff) is CAN / emulator driven.
 //! Vehicle operation (RPM, park, lighting, …) is CAN / emulator driven — not the dashboard.
 
+mod cli;
+
 use std::time::Duration;
 
 use anyhow::Result;
 use common::observation_records::diagnostic::elapsed_since_session;
-use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use crossterm::ExecutableCommand;
 use gateway::gateway_runtime::TwinRuntimeBuilder;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -25,14 +27,19 @@ use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use common::facade::{
+    PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord, UnixTimestamp,
+};
 use common::DiagnosticRecord;
 use common::PublishedDomainAction;
-use common::facade::{PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord};
+use observation::{RunId, RunMetadata, RunWriter, UnixTimestampV1};
 
 const VIRTUAL_CAR_IDENTITY: &str = "My-Opel-Corsa-1.4-GSi";
 const BOOT_DIAGNOSTIC_WAIT: Duration = Duration::from_millis(500);
 const KEYS_FOOTER: &str = "Keys: 'q' quit";
 const MAX_PANEL_LINE_CHARS: usize = 72;
+
+type DashboardTerminal = Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>;
 
 /// Channels and runtime handles wired in `main()` before the dashboard loop runs.
 struct DigitalTwinRuntime {
@@ -44,8 +51,18 @@ struct DigitalTwinRuntime {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = cli::parse_args(std::env::args_os().skip(1))?;
     let mut twin = install_digital_twin().await?;
-    run_dashboard(&mut twin).await
+    let boot = require_boot_diagnostic(&mut twin.diagnostic_rx, BOOT_DIAGNOSTIC_WAIT).await?;
+    let metadata = RunMetadata::now(
+        RunId::new_v4(),
+        UnixTimestampV1::from_live(boot.session_started_at),
+        VIRTUAL_CAR_IDENTITY,
+        None,
+    )?;
+    let capture = RunWriter::create(&args.observation_dir, metadata)?;
+    eprintln!("Observation run: {}", capture.run_dir().display());
+    run_dashboard(&mut twin, capture, boot).await
 }
 
 /// Setup call-tree: create channels, install twin via gateway runtime APIs, spawn ingress.
@@ -70,34 +87,163 @@ async fn install_digital_twin() -> Result<DigitalTwinRuntime> {
     })
 }
 
-async fn run_dashboard(twin: &mut DigitalTwinRuntime) -> Result<()> {
-    let mut latest_diagnostic =
-        await_boot_diagnostic(&mut twin.diagnostic_rx, BOOT_DIAGNOSTIC_WAIT).await;
-    let mut latest_transition: Option<PublishedTransitionRecord> = None;
+async fn run_dashboard(
+    twin: &mut DigitalTwinRuntime,
+    mut capture: RunWriter,
+    boot: DiagnosticRecord,
+) -> Result<()> {
+    let mut state = DashboardState::default();
 
+    // The boot diagnostic is persisted before any terminal setup so a capture failure here
+    // propagates cleanly without leaving the terminal in raw mode.
+    capture = handle_boot_before_terminal(boot, capture, &mut state)?;
+
+    let mut terminal = match setup_terminal() {
+        Ok(terminal) => terminal,
+        Err(setup_error) => {
+            let finish_result = capture.finish_capture();
+            return preserve_primary_result(Err(setup_error), finish_result);
+        }
+    };
+
+    let loop_result = run_ui_loop(&mut terminal, twin, &mut capture, &mut state).await;
+    let final_drain_result = final_drain_twin_emissions(
+        &mut twin.diagnostic_rx,
+        &mut twin.transition_rx,
+        &mut capture,
+        &mut state,
+    );
+    let operation_result = preserve_primary_result(loop_result, final_drain_result);
+
+    let restoration_result = restore_terminal(&mut terminal);
+    let finish_result = capture.finish_capture();
+
+    // All work above is attempted before results are combined: terminal restoration precedes
+    // finish, and finish runs on both successful and failed loop/final-drain paths. The earliest
+    // operation error remains primary if restoration or finish also fail.
+    let result = preserve_primary_result(operation_result, restoration_result);
+    preserve_primary_result(result, finish_result)
+}
+
+fn setup_terminal() -> Result<DashboardTerminal> {
     enable_raw_mode()?;
     let mut stderr = std::io::stderr();
-    crossterm::execute!(stderr, EnterAlternateScreen)?;
-    let mut terminal = Terminal::new(ratatui::backend::CrosstermBackend::new(stderr))?;
 
-    let res = run_ui_loop(
-        &mut terminal,
-        twin,
-        &mut latest_diagnostic,
-        &mut latest_transition,
-    )
-    .await;
-
-    disable_raw_mode()?;
-    terminal.backend_mut().execute(LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
-    // Convenience (see DESIGN §16.6): quitting exits the process and drops the runtime handle,
-    // which stops CAN ingress to the twin. A future version may disband explicitly (TL-6).
-    if let Err(e) = res {
-        eprintln!("Dashboard error: {e:?}");
+    if let Err(error) = crossterm::execute!(stderr, EnterAlternateScreen) {
+        best_effort_restore_after_setup_failure();
+        return Err(error.into());
     }
+
+    match Terminal::new(ratatui::backend::CrosstermBackend::new(stderr)) {
+        Ok(terminal) => Ok(terminal),
+        Err(error) => {
+            best_effort_restore_after_setup_failure();
+            Err(error.into())
+        }
+    }
+}
+
+fn best_effort_restore_after_setup_failure() {
+    let mut stderr = std::io::stderr();
+    let _ = stderr.execute(LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+}
+
+fn restore_terminal(terminal: &mut DashboardTerminal) -> Result<()> {
+    let raw_mode_result = disable_raw_mode().map_err(anyhow::Error::from);
+    let alternate_screen_result = terminal
+        .backend_mut()
+        .execute(LeaveAlternateScreen)
+        .map(|_| ())
+        .map_err(anyhow::Error::from);
+    let cursor_result = terminal.show_cursor().map_err(anyhow::Error::from);
+
+    let result = preserve_primary_result(raw_mode_result, alternate_screen_result);
+    preserve_primary_result(result, cursor_result)
+}
+
+fn preserve_primary_result(primary: Result<()>, secondary: Result<()>) -> Result<()> {
+    match primary {
+        Err(error) => Err(error),
+        Ok(()) => secondary,
+    }
+}
+
+/// Application boundary for durable capture. Keeping it narrow lets the UI loop be driven by a
+/// fake in tests while `RunWriter` provides the production implementation.
+trait RecordCapture {
+    fn record_diagnostic(&mut self, record: &DiagnosticRecord) -> Result<()>;
+    fn record_ledger(&mut self, record: &PublishedTransitionRecord) -> Result<()>;
+}
+
+trait CaptureFinalizer {
+    fn finish_capture(self) -> Result<()>;
+}
+
+impl RecordCapture for RunWriter {
+    fn record_diagnostic(&mut self, record: &DiagnosticRecord) -> Result<()> {
+        RunWriter::record_diagnostic(self, record)?;
+        Ok(())
+    }
+
+    fn record_ledger(&mut self, record: &PublishedTransitionRecord) -> Result<()> {
+        RunWriter::record_ledger(self, record)?;
+        Ok(())
+    }
+}
+
+impl CaptureFinalizer for RunWriter {
+    fn finish_capture(self) -> Result<()> {
+        self.finish()?;
+        Ok(())
+    }
+}
+
+/// Latest twin emissions retained purely for rendering; every record is captured first.
+#[derive(Default)]
+struct DashboardState {
+    latest_diagnostic: Option<DiagnosticRecord>,
+    latest_transition: Option<PublishedTransitionRecord>,
+}
+
+fn handle_diagnostic(
+    record: DiagnosticRecord,
+    capture: &mut impl RecordCapture,
+    state: &mut DashboardState,
+) -> Result<()> {
+    capture.record_diagnostic(&record)?;
+    state.latest_diagnostic = Some(record);
     Ok(())
+}
+
+fn handle_ledger(
+    record: PublishedTransitionRecord,
+    capture: &mut impl RecordCapture,
+    state: &mut DashboardState,
+) -> Result<()> {
+    capture.record_ledger(&record)?;
+    state.latest_transition = Some(record);
+    Ok(())
+}
+
+fn handle_boot_before_terminal<C>(
+    record: DiagnosticRecord,
+    mut capture: C,
+    state: &mut DashboardState,
+) -> Result<C>
+where
+    C: RecordCapture + CaptureFinalizer,
+{
+    match handle_diagnostic(record, &mut capture, state) {
+        Ok(()) => Ok(capture),
+        Err(boot_error) => {
+            let result = preserve_primary_result(Err(boot_error), capture.finish_capture());
+            match result {
+                Err(error) => Err(error),
+                Ok(()) => unreachable!("a boot capture error is always primary"),
+            }
+        }
+    }
 }
 
 async fn await_boot_diagnostic(
@@ -110,22 +256,32 @@ async fn await_boot_diagnostic(
     }
 }
 
+/// Require the Twin boot diagnostic before creating a run directory.
+async fn require_boot_diagnostic(
+    rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
+    timeout: Duration,
+) -> Result<DiagnosticRecord> {
+    await_boot_diagnostic(rx, timeout)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("timed out waiting for Twin boot diagnostic"))
+}
+
 async fn run_ui_loop(
-    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
+    terminal: &mut DashboardTerminal,
     twin: &mut DigitalTwinRuntime,
-    latest_diagnostic: &mut Option<DiagnosticRecord>,
-    latest_transition: &mut Option<PublishedTransitionRecord>,
+    capture: &mut impl RecordCapture,
+    state: &mut DashboardState,
 ) -> Result<()> {
     loop {
         drain_twin_emissions(
             &mut twin.diagnostic_rx,
             &mut twin.transition_rx,
-            latest_diagnostic,
-            latest_transition,
-        );
+            capture,
+            state,
+        )?;
 
         terminal.draw(|f| {
-            render_frame(f, latest_diagnostic, latest_transition);
+            render_frame(f, &state.latest_diagnostic, &state.latest_transition);
         })?;
 
         if event::poll(Duration::from_millis(50))? {
@@ -140,19 +296,29 @@ async fn run_ui_loop(
     Ok(())
 }
 
-/// Dashboard trusts the twin: display only what arrives on the observation channels.
+/// Dashboard trusts the twin: capture every emission durably before retaining it for display.
 fn drain_twin_emissions(
     diag_rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
     trans_rx: &mut mpsc::Receiver<PublishedTransitionRecord>,
-    latest_diagnostic: &mut Option<DiagnosticRecord>,
-    latest_transition: &mut Option<PublishedTransitionRecord>,
-) {
+    capture: &mut impl RecordCapture,
+    state: &mut DashboardState,
+) -> Result<()> {
     while let Ok(record) = diag_rx.try_recv() {
-        *latest_diagnostic = Some(record);
+        handle_diagnostic(record, capture, state)?;
     }
     while let Ok(record) = trans_rx.try_recv() {
-        *latest_transition = Some(record);
+        handle_ledger(record, capture, state)?;
     }
+    Ok(())
+}
+
+fn final_drain_twin_emissions(
+    diag_rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
+    trans_rx: &mut mpsc::Receiver<PublishedTransitionRecord>,
+    capture: &mut impl RecordCapture,
+    state: &mut DashboardState,
+) -> Result<()> {
+    drain_twin_emissions(diag_rx, trans_rx, capture, state)
 }
 
 fn render_frame(
@@ -185,7 +351,7 @@ fn render_frame(
         .split(outer[1]);
 
     let panel_width = chunks[0].width.saturating_sub(4) as usize;
-    let line_limit = panel_width.max(24).min(MAX_PANEL_LINE_CHARS);
+    let line_limit = panel_width.clamp(24, MAX_PANEL_LINE_CHARS);
 
     let pre_power = twin_pre_power_on(latest_transition);
 
@@ -198,7 +364,7 @@ fn render_frame(
                 &format!("{:?}", d.level),
                 line_limit,
             ))),
-            Line::from(Span::raw(format_field("Source", &d.source, line_limit))),
+            Line::from(Span::raw(format_field("Source", d.source, line_limit))),
             Line::from(Span::raw(format_field(
                 "Message",
                 &truncate_line(&d.message),
@@ -250,10 +416,7 @@ fn render_frame(
             ))),
             Line::from(Span::raw(format_field(
                 "T+ since session",
-                &format_elapsed(elapsed_since_session(
-                    t.recorded_at_unix,
-                    t.session_start_unix_nanos,
-                )),
+                &format_elapsed(elapsed_since_session(t.recorded_at, t.session_started_at)),
                 line_limit,
             ))),
         ]
@@ -315,8 +478,11 @@ fn format_published_event(event: &PublishedFsmEvent) -> String {
 
 fn format_published_state(state: &PublishedFsmState) -> String {
     match state {
-        PublishedFsmState::ExtremeOperationWarning { entered_at_unix } => {
-            format!("ExtremeOpWarn@{}ms", entered_at_unix.as_millis())
+        PublishedFsmState::ExtremeOperationWarning { entered_at } => {
+            format!(
+                "ExtremeOpWarn@{}ms",
+                entered_at.duration_since_epoch().as_millis()
+            )
         }
         other => format!("{other:?}"),
     }
@@ -348,21 +514,17 @@ fn format_status_line(
     latest_diagnostic: &Option<DiagnosticRecord>,
     latest_transition: &Option<PublishedTransitionRecord>,
 ) -> String {
-    let session_nanos = latest_transition
+    let session_started_at = latest_transition
         .as_ref()
-        .map(|t| t.session_start_unix_nanos)
-        .or_else(|| {
-            latest_diagnostic
-                .as_ref()
-                .map(|d| d.session_start_unix_nanos)
-        });
+        .map(|t| t.session_started_at)
+        .or_else(|| latest_diagnostic.as_ref().map(|d| d.session_started_at));
 
-    let session_label = session_nanos
-        .map(format_unix_nanos_short)
+    let session_label = session_started_at
+        .map(format_unix_timestamp_short)
         .unwrap_or_else(|| "awaiting twin…".to_string());
 
     let twin_elapsed = latest_twin_elapsed(latest_diagnostic, latest_transition)
-        .map(|d| format_elapsed(d))
+        .map(format_elapsed)
         .unwrap_or_else(|| "—".to_string());
 
     let last_ledger = latest_transition
@@ -389,15 +551,12 @@ fn latest_twin_elapsed(
     latest_transition: &Option<PublishedTransitionRecord>,
 ) -> Option<Duration> {
     match (latest_diagnostic, latest_transition) {
-        (Some(d), Some(t)) => Some(d.elapsed_since_session().max(elapsed_since_session(
-            t.recorded_at_unix,
-            t.session_start_unix_nanos,
-        ))),
+        (Some(d), Some(t)) => Some(
+            d.elapsed_since_session()
+                .max(elapsed_since_session(t.recorded_at, t.session_started_at)),
+        ),
         (Some(d), None) => Some(d.elapsed_since_session()),
-        (None, Some(t)) => Some(elapsed_since_session(
-            t.recorded_at_unix,
-            t.session_start_unix_nanos,
-        )),
+        (None, Some(t)) => Some(elapsed_since_session(t.recorded_at, t.session_started_at)),
         (None, None) => None,
     }
 }
@@ -416,8 +575,8 @@ fn format_elapsed(d: Duration) -> String {
     }
 }
 
-fn format_unix_nanos_short(nanos: u128) -> String {
-    let secs = (nanos / 1_000_000_000) as u64;
+fn format_unix_timestamp_short(timestamp: UnixTimestamp) -> String {
+    let secs = timestamp.unix_seconds();
     format!(
         "{:02}:{:02}:{:02} UTC",
         (secs / 3600) % 24,
@@ -430,14 +589,23 @@ fn format_unix_nanos_short(nanos: u128) -> String {
 mod tests {
     use super::*;
     use common::DiagnosticLevel;
+    use observation::RunReader;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     fn sample_boot_diagnostic() -> DiagnosticRecord {
         DiagnosticRecord {
             level: DiagnosticLevel::Info,
             source: "VirtualCarActor",
             message: "initializing".into(),
-            session_start_unix_nanos: 1_700_000_000_000_000_000,
-            recorded_at_unix: Duration::from_nanos(1_700_000_000_050_000_000),
+            session_started_at: UnixTimestamp::from_duration_since_epoch(Duration::new(
+                1_700_000_000,
+                0,
+            )),
+            recorded_at: UnixTimestamp::from_duration_since_epoch(Duration::new(
+                1_700_000_000,
+                50_000_000,
+            )),
         }
     }
 
@@ -459,9 +627,9 @@ mod tests {
     fn status_line_fsm_from_latest_ledger_row() {
         let row = PublishedTransitionRecord {
             car_identity: "x".into(),
-            session_start_unix_nanos: 1,
+            session_started_at: UnixTimestamp::from_duration_since_epoch(Duration::from_nanos(1)),
             record_seq: 2,
-            recorded_at_unix: Duration::ZERO,
+            recorded_at: UnixTimestamp::from_duration_since_epoch(Duration::ZERO),
             event: PublishedFsmEvent::UpdateRpm(1500),
             old_state: PublishedFsmState::Idle,
             next_state: PublishedFsmState::Driving,
@@ -515,12 +683,248 @@ mod tests {
         assert!(summary.len() < 120);
     }
 
+    /// Records how the handlers drove capture and lets a test force a failure.
+    #[derive(Default)]
+    struct FakeCapture {
+        diagnostic_calls: usize,
+        ledger_calls: usize,
+        fail_diagnostic: bool,
+        fail_ledger: bool,
+    }
+
+    impl RecordCapture for FakeCapture {
+        fn record_diagnostic(&mut self, _record: &DiagnosticRecord) -> Result<()> {
+            self.diagnostic_calls += 1;
+            if self.fail_diagnostic {
+                anyhow::bail!("forced diagnostic capture failure");
+            }
+            Ok(())
+        }
+
+        fn record_ledger(&mut self, _record: &PublishedTransitionRecord) -> Result<()> {
+            self.ledger_calls += 1;
+            if self.fail_ledger {
+                anyhow::bail!("forced ledger capture failure");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn handle_diagnostic_captures_once_then_updates_state() {
+        let mut capture = FakeCapture::default();
+        let mut state = DashboardState::default();
+        let record = sample_boot_diagnostic();
+
+        handle_diagnostic(record.clone(), &mut capture, &mut state).unwrap();
+
+        assert_eq!(capture.diagnostic_calls, 1);
+        let retained = state
+            .latest_diagnostic
+            .expect("state updated after capture");
+        assert_eq!(retained.message, record.message);
+        assert_eq!(retained.recorded_at, record.recorded_at);
+    }
+
+    #[test]
+    fn handle_ledger_captures_once_then_updates_state() {
+        let mut capture = FakeCapture::default();
+        let mut state = DashboardState::default();
+        let record = sample_ledger_row();
+
+        handle_ledger(record.clone(), &mut capture, &mut state).unwrap();
+
+        assert_eq!(capture.ledger_calls, 1);
+        assert_eq!(state.latest_transition, Some(record));
+    }
+
+    #[test]
+    fn handle_diagnostic_error_leaves_previous_latest_unchanged() {
+        let previous = sample_boot_diagnostic();
+        let mut state = DashboardState {
+            latest_diagnostic: Some(previous.clone()),
+            latest_transition: None,
+        };
+        let mut capture = FakeCapture {
+            fail_diagnostic: true,
+            ..FakeCapture::default()
+        };
+        let mut newer = sample_boot_diagnostic();
+        newer.message = "newer diagnostic that must not be retained".into();
+
+        let result = handle_diagnostic(newer, &mut capture, &mut state);
+
+        assert!(result.is_err());
+        assert_eq!(capture.diagnostic_calls, 1);
+        let retained = state
+            .latest_diagnostic
+            .expect("previous diagnostic must be retained on failure");
+        assert_eq!(retained.message, previous.message);
+    }
+
+    #[test]
+    fn handle_ledger_error_leaves_previous_latest_unchanged() {
+        let previous = sample_ledger_row();
+        let mut state = DashboardState {
+            latest_diagnostic: None,
+            latest_transition: Some(previous.clone()),
+        };
+        let mut capture = FakeCapture {
+            fail_ledger: true,
+            ..FakeCapture::default()
+        };
+        let mut newer = sample_ledger_row();
+        newer.record_seq = 999;
+
+        let result = handle_ledger(newer, &mut capture, &mut state);
+
+        assert!(result.is_err());
+        assert_eq!(capture.ledger_calls, 1);
+        assert_eq!(state.latest_transition, Some(previous));
+    }
+
+    #[tokio::test]
+    async fn boot_diagnostic_is_routed_through_handle_diagnostic() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
+        let boot = sample_boot_diagnostic();
+        tx.send(boot.clone()).unwrap();
+
+        let received = await_boot_diagnostic(&mut rx, BOOT_DIAGNOSTIC_WAIT)
+            .await
+            .expect("boot diagnostic should be received");
+
+        let mut capture = FakeCapture::default();
+        let mut state = DashboardState::default();
+        handle_diagnostic(received, &mut capture, &mut state).unwrap();
+
+        assert_eq!(capture.diagnostic_calls, 1);
+        let retained = state
+            .latest_diagnostic
+            .expect("boot diagnostic captured then retained");
+        assert_eq!(retained.message, boot.message);
+        assert_eq!(retained.source, boot.source);
+    }
+
+    #[derive(Debug)]
+    struct FailingBootCapture {
+        finish_calls: Rc<Cell<usize>>,
+    }
+
+    impl RecordCapture for FailingBootCapture {
+        fn record_diagnostic(&mut self, _record: &DiagnosticRecord) -> Result<()> {
+            anyhow::bail!("boot capture failed")
+        }
+
+        fn record_ledger(&mut self, _record: &PublishedTransitionRecord) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CaptureFinalizer for FailingBootCapture {
+        fn finish_capture(self) -> Result<()> {
+            self.finish_calls.set(self.finish_calls.get() + 1);
+            anyhow::bail!("finish failed")
+        }
+    }
+
+    #[test]
+    fn final_drain_captures_records_queued_after_an_earlier_drain() {
+        let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
+        let (ledger_tx, mut ledger_rx) = mpsc::channel::<PublishedTransitionRecord>(4);
+        let mut capture = FakeCapture::default();
+        let mut state = DashboardState::default();
+
+        drain_twin_emissions(&mut diag_rx, &mut ledger_rx, &mut capture, &mut state).unwrap();
+        diag_tx.send(sample_boot_diagnostic()).unwrap();
+        ledger_tx.try_send(sample_ledger_row()).unwrap();
+
+        final_drain_twin_emissions(&mut diag_rx, &mut ledger_rx, &mut capture, &mut state).unwrap();
+
+        assert_eq!(capture.diagnostic_calls, 1);
+        assert_eq!(capture.ledger_calls, 1);
+        assert!(state.latest_diagnostic.is_some());
+        assert!(state.latest_transition.is_some());
+    }
+
+    #[test]
+    fn production_drain_persists_records_readable_by_run_reader() {
+        let temp = tempfile::tempdir().unwrap();
+        let run_id = RunId::parse("00000000-0000-4000-8000-000000000006").unwrap();
+        let boot = sample_boot_diagnostic();
+        let metadata = RunMetadata::new(
+            run_id.clone(),
+            UnixTimestampV1::from_live(boot.recorded_at),
+            UnixTimestampV1::from_live(boot.session_started_at),
+            "x",
+            None,
+        );
+        let mut capture = RunWriter::create(temp.path(), metadata).unwrap();
+        let run_dir = capture.run_dir().to_path_buf();
+        let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
+        let (ledger_tx, mut ledger_rx) = mpsc::channel::<PublishedTransitionRecord>(4);
+        diag_tx.send(boot).unwrap();
+        ledger_tx.try_send(sample_ledger_row()).unwrap();
+        let mut state = DashboardState::default();
+
+        drain_twin_emissions(&mut diag_rx, &mut ledger_rx, &mut capture, &mut state).unwrap();
+        capture.finish().unwrap();
+
+        let stored = RunReader::open(run_dir).unwrap().load().unwrap();
+        assert_eq!(stored.diagnostics.len(), 1);
+        assert_eq!(stored.ledger.len(), 1);
+        assert_eq!(stored.diagnostics[0].payload.message, "initializing");
+        assert_eq!(stored.ledger[0].payload.record_seq, 1);
+        assert_eq!(
+            stored.manifest.session_started_at,
+            stored.diagnostics[0].payload.session_started_at
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_timeout_creates_no_run_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_tx, mut rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
+        let error = require_boot_diagnostic(&mut rx, Duration::from_millis(20))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("timed out"), "{error}");
+        assert!(
+            temp.path().read_dir().unwrap().next().is_none(),
+            "observation parent must remain empty when boot times out"
+        );
+    }
+
+    #[test]
+    fn capture_finalization_preserves_boot_primary_and_surfaces_lone_finish_error() {
+        let finish_calls = Rc::new(Cell::new(0));
+        let capture = FailingBootCapture {
+            finish_calls: Rc::clone(&finish_calls),
+        };
+        let mut state = DashboardState::default();
+
+        let error =
+            handle_boot_before_terminal(sample_boot_diagnostic(), capture, &mut state).unwrap_err();
+
+        assert_eq!(finish_calls.get(), 1);
+        assert_eq!(error.to_string(), "boot capture failed");
+        assert!(state.latest_diagnostic.is_none());
+
+        let combined = preserve_primary_result(Ok(()), Err(anyhow::anyhow!("finish failed")));
+        assert_eq!(combined.unwrap_err().to_string(), "finish failed");
+    }
+
     fn sample_ledger_row() -> PublishedTransitionRecord {
         PublishedTransitionRecord {
             car_identity: "x".into(),
-            session_start_unix_nanos: 1,
+            session_started_at: UnixTimestamp::from_duration_since_epoch(Duration::new(
+                1_700_000_000,
+                0,
+            )),
             record_seq: 1,
-            recorded_at_unix: Duration::ZERO,
+            recorded_at: UnixTimestamp::from_duration_since_epoch(Duration::new(
+                1_700_000_000,
+                100_000_000,
+            )),
             event: PublishedFsmEvent::PowerOn,
             old_state: PublishedFsmState::Off,
             next_state: PublishedFsmState::PreparingToStart,
@@ -554,7 +958,7 @@ mod tests {
             visibility: PublishedVisibilityContext { ambient_lux: 0 },
             headlamp: PublishedHeadlampContext {
                 state: PublishedHeadlampState::Off,
-                ack_pending_since_at_unix: None,
+                ack_pending_since: None,
             },
         }
     }

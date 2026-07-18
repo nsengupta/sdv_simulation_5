@@ -34,9 +34,7 @@ async fn main() -> Result<()> {
         let _trans_log = transition_log::spawn_transition_log_task(trans_rx, color);
         builder = builder.with_transition_channel(trans_tx);
 
-        eprintln!(
-            "[gateway] ledger-only mode (--print-transitions-only); colours={color}",
-        );
+        eprintln!("[gateway] ledger-only mode (--print-transitions-only); colours={color}",);
     } else {
         // Normal mode: wire diagnostic channel to stdout.
         let (diag_tx, diag_rx) = mpsc::unbounded_channel();

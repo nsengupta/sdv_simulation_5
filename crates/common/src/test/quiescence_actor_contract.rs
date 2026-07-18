@@ -8,14 +8,12 @@ use crate::fsm::{DomainAction, FsmEvent, FsmState, HeadlampState, Operational};
 use crate::observation_records::transition::{
     PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedOperational,
 };
-use crate::test::power_on_to_idle;
 use crate::test::ActorGuard;
+use crate::test::power_on_to_idle;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
-use crate::twin_runtime::{commit_resolved_turn, ResolvedTurn, ZoneReplies};
+use crate::twin_runtime::{ResolvedTurn, ZoneReplies, commit_resolved_turn};
+use crate::vehicle_physics::{FRONT_HEADLAMP_ON_ACK_WAIT, RPM_DRIVING_THRESHOLD};
 use crate::vehicle_state::VehicleContext;
-use crate::vehicle_physics::{
-    FRONT_HEADLAMP_ON_ACK_WAIT, RPM_DRIVING_THRESHOLD,
-};
 use crate::{TwinIngressEvent, VehicleController, VssSignal};
 use tokio::sync::mpsc;
 
@@ -28,8 +26,8 @@ fn ctx_driving_in_dark() -> VehicleContext {
 }
 
 #[test]
-fn given_driving_on_requested_in_dark_when_commit_resolved_turn_after_ack_wait_then_two_hops_enter_danger(
-) {
+fn given_driving_on_requested_in_dark_when_commit_resolved_turn_after_ack_wait_then_two_hops_enter_danger()
+ {
     let t0 = Instant::now();
     let mut ctx = ctx_driving_in_dark();
     ctx.headlamp.state = HeadlampState::OnRequested;
@@ -56,14 +54,16 @@ fn given_driving_on_requested_in_dark_when_commit_resolved_turn_after_ack_wait_t
         FsmState::DrivingDangerously
     );
     assert!(
-        quiescent.merged_actions().contains(&DomainAction::StartBuzzer),
+        quiescent
+            .merged_actions()
+            .contains(&DomainAction::StartBuzzer),
         "quiescence must merge buzzer from internal hop"
     );
 }
 
 #[test]
-fn given_driving_in_dark_when_commit_resolved_turn_without_zone_reply_then_single_hop_stays_driving(
-) {
+fn given_driving_in_dark_when_commit_resolved_turn_without_zone_reply_then_single_hop_stays_driving()
+ {
     let t0 = Instant::now();
     let mut ctx = ctx_driving_in_dark();
     ctx.headlamp.state = HeadlampState::OnRequested;
@@ -122,7 +122,10 @@ async fn given_actor_idle_when_power_on_then_single_ledger_row_and_idle_state() 
     //   row 3 = AssemblyZoneReady(Wiper) → Idle
     let record_headlamp = rx.recv().await.expect("headlamp zone ready row");
     assert_eq!(record_headlamp.record_seq, 2);
-    assert_eq!(record_headlamp.next_state, PublishedFsmState::PreparingToStart);
+    assert_eq!(
+        record_headlamp.next_state,
+        PublishedFsmState::PreparingToStart
+    );
 
     let record_idle = rx.recv().await.expect("wiper zone ready → idle ledger row");
     assert_eq!(record_idle.record_seq, 3);
@@ -137,8 +140,8 @@ async fn given_actor_idle_when_power_on_then_single_ledger_row_and_idle_state() 
 }
 
 #[tokio::test]
-async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_and_driving_dangerously(
-) {
+async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_and_driving_dangerously()
+ {
     let (transition_tx, mut rx) = mpsc::channel(16);
     let runtime_options = VehicleControllerRuntimeOptions {
         transition_tx: Some(transition_tx),
@@ -162,7 +165,10 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_
     //   row 3 = AssemblyZoneReady(Wiper) → Idle
     power_on_to_idle(&controller).await;
     let _ = rx.recv().await.expect("power on → preparing row");
-    let _ = rx.recv().await.expect("headlamp zone ready → preparing row");
+    let _ = rx
+        .recv()
+        .await
+        .expect("headlamp zone ready → preparing row");
     let _ = rx.recv().await.expect("wiper zone ready → idle row");
 
     crate::test::submit_daylight_ambient(&controller).await;
@@ -175,9 +181,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_
     let _ = rx.recv().await.expect("rpm row");
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux");
     let lux_row = rx.recv().await.expect("lux row");
@@ -185,7 +189,10 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_
 
     tokio::time::sleep(FRONT_HEADLAMP_ON_ACK_WAIT + Duration::from_millis(25)).await;
 
-    let hop1 = rx.recv().await.expect("spontaneous incomplete hop ledger row");
+    let hop1 = rx
+        .recv()
+        .await
+        .expect("spontaneous incomplete hop ledger row");
     let hop2 = rx.recv().await.expect("internal hop ledger row");
 
     assert!(
@@ -203,8 +210,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_
     ));
     assert_eq!(hop2.next_state, PublishedFsmState::DrivingDangerously);
     assert!(
-        hop2
-            .actions
+        hop2.actions
             .iter()
             .any(|a| matches!(a, PublishedDomainAction::StartBuzzer)),
         "internal hop row must carry StartBuzzer, got {:?}",

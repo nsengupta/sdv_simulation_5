@@ -8,7 +8,9 @@
 //! mode. Nothing here performs I/O. In Step 2 this becomes `PowertrainActor`'s
 //! local state + flat FSM.
 
-use crate::vehicle_physics::constants::{operational_warning_active, RPM_IDLE, RPM_REDLINE_THRESHOLD};
+use crate::vehicle_physics::constants::{
+    RPM_IDLE, RPM_REDLINE_THRESHOLD, operational_warning_active,
+};
 use crate::vehicle_physics::kinematics::calculate_speed_from_rpm;
 
 /// L1 powertrain snapshot (wheel RPM + derived speed).

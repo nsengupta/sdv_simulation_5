@@ -1,11 +1,12 @@
 //! Unit tests for the FSM spec (`transition` / `output`).
 
-use crate::fsm::{output, transition, FsmAction, FsmEvent, FsmState, AssemblyId};
-use crate::vehicle_state::VehicleContext;
+use crate::fsm::{AssemblyId, FsmAction, FsmEvent, FsmState, output, transition};
 use crate::vehicle_physics::{
-    extreme_operation_active, EXTREME_OPERATION_WARNING_MESSAGE, RPM_EXTREME_OPERATION_THRESHOLD,
+    EXTREME_OPERATION_WARNING_MESSAGE, RPM_EXTREME_OPERATION_THRESHOLD,
     SPEED_EXTREME_OPERATION_THRESHOLD_KPH, SPEED_THRESHOLD_WARNING_MESSAGE,
+    extreme_operation_active,
 };
+use crate::vehicle_state::VehicleContext;
 use std::time::{Duration, Instant};
 
 fn ctx_with_rpm(rpm: u16) -> VehicleContext {
@@ -36,8 +37,16 @@ fn test_transition_and_output_extreme_operation_emits_both_signals() {
         overspeed_ctx.powertrain.speed_kph
     ));
 
-    let warning = transition(&driving.next_state, &FsmEvent::UpdateRpm(5600), &overspeed_ctx, now);
-    assert!(matches!(warning.next_state, FsmState::ExtremeOperationWarning(_)));
+    let warning = transition(
+        &driving.next_state,
+        &FsmEvent::UpdateRpm(5600),
+        &overspeed_ctx,
+        now,
+    );
+    assert!(matches!(
+        warning.next_state,
+        FsmState::ExtremeOperationWarning(_)
+    ));
 
     let actions = output(&FsmState::Driving, &warning.next_state, &overspeed_ctx);
     assert!(actions.contains(&FsmAction::StartBuzzer));
@@ -59,10 +68,21 @@ fn test_transition_high_speed_alone_emits_speed_threshold_signal_only() {
     let fast_ctx = ctx_with_rpm(rpm);
     assert!(fast_ctx.powertrain.speed_kph > SPEED_EXTREME_OPERATION_THRESHOLD_KPH);
     assert!(fast_ctx.powertrain.wheel_rpm.front_left <= RPM_EXTREME_OPERATION_THRESHOLD);
-    assert!(!extreme_operation_active(fast_ctx.powertrain.wheel_rpm.front_left, fast_ctx.powertrain.speed_kph));
+    assert!(!extreme_operation_active(
+        fast_ctx.powertrain.wheel_rpm.front_left,
+        fast_ctx.powertrain.speed_kph
+    ));
 
-    let warning = transition(&driving.next_state, &FsmEvent::UpdateRpm(rpm), &fast_ctx, now);
-    assert!(matches!(warning.next_state, FsmState::ExtremeOperationWarning(_)));
+    let warning = transition(
+        &driving.next_state,
+        &FsmEvent::UpdateRpm(rpm),
+        &fast_ctx,
+        now,
+    );
+    assert!(matches!(
+        warning.next_state,
+        FsmState::ExtremeOperationWarning(_)
+    ));
 
     let actions = output(&FsmState::Driving, &warning.next_state, &fast_ctx);
     assert!(actions.contains(&FsmAction::LogWarning(
@@ -83,9 +103,8 @@ fn test_transition_standard_commute_flow() {
     assert!(matches!(state.next_state, FsmState::PreparingToStart(_)));
 
     // Shrink to just Headlamp remaining, then AssemblyZoneReady(Headlamp) → Idle.
-    let headlamp_only = FsmState::PreparingToStart(
-        std::collections::BTreeSet::from([AssemblyId::Headlamp])
-    );
+    let headlamp_only =
+        FsmState::PreparingToStart(std::collections::BTreeSet::from([AssemblyId::Headlamp]));
     state = transition(
         &headlamp_only,
         &FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp),
@@ -95,15 +114,30 @@ fn test_transition_standard_commute_flow() {
     assert_eq!(state.next_state, FsmState::Idle);
 
     let driving_ctx = ctx_with_rpm(1500);
-    state = transition(&state.next_state, &FsmEvent::UpdateRpm(1500), &driving_ctx, now);
+    state = transition(
+        &state.next_state,
+        &FsmEvent::UpdateRpm(1500),
+        &driving_ctx,
+        now,
+    );
     assert_eq!(state.next_state, FsmState::Driving);
 
     // Stay below speed threshold (160 km/h): ~1300 RPM → ~148 km/h.
-    state = transition(&state.next_state, &FsmEvent::UpdateRpm(1300), &ctx_with_rpm(1300), now);
+    state = transition(
+        &state.next_state,
+        &FsmEvent::UpdateRpm(1300),
+        &ctx_with_rpm(1300),
+        now,
+    );
     assert_eq!(state.next_state, FsmState::Driving);
 
     let stopped_ctx = ctx_with_rpm(0);
-    state = transition(&state.next_state, &FsmEvent::UpdateRpm(0), &stopped_ctx, now);
+    state = transition(
+        &state.next_state,
+        &FsmEvent::UpdateRpm(0),
+        &stopped_ctx,
+        now,
+    );
     assert_eq!(state.next_state, FsmState::Idle);
 
     // Idle + PowerOff → PreparingToStop({Headlamp, Wiper})
@@ -111,9 +145,8 @@ fn test_transition_standard_commute_flow() {
     assert!(matches!(state.next_state, FsmState::PreparingToStop(_)));
 
     // Shrink to just Headlamp remaining, then AssemblyZoneReady(Headlamp) → Off.
-    let headlamp_only_stop = FsmState::PreparingToStop(
-        std::collections::BTreeSet::from([AssemblyId::Headlamp])
-    );
+    let headlamp_only_stop =
+        FsmState::PreparingToStop(std::collections::BTreeSet::from([AssemblyId::Headlamp]));
     state = transition(
         &headlamp_only_stop,
         &FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp),
@@ -126,7 +159,12 @@ fn test_transition_standard_commute_flow() {
 #[test]
 fn test_transition_illegal_shutdown_attempt() {
     let ctx = ctx_with_rpm(3000);
-    let state = transition(&FsmState::Driving, &FsmEvent::PowerOff, &ctx, Instant::now());
+    let state = transition(
+        &FsmState::Driving,
+        &FsmEvent::PowerOff,
+        &ctx,
+        Instant::now(),
+    );
     assert_eq!(state.next_state, FsmState::Driving);
 }
 
@@ -142,7 +180,10 @@ fn test_warning_recovery_requires_cooldown_and_cleared_thresholds() {
         &ctx,
         base + Duration::from_secs(2),
     );
-    assert!(matches!(early.next_state, FsmState::ExtremeOperationWarning(_)));
+    assert!(matches!(
+        early.next_state,
+        FsmState::ExtremeOperationWarning(_)
+    ));
 
     let still_extreme_ctx = ctx_with_rpm(6200);
     assert!(extreme_operation_active(
@@ -155,7 +196,10 @@ fn test_warning_recovery_requires_cooldown_and_cleared_thresholds() {
         &still_extreme_ctx,
         base + Duration::from_secs(6),
     );
-    assert!(matches!(still_warning.next_state, FsmState::ExtremeOperationWarning(_)));
+    assert!(matches!(
+        still_warning.next_state,
+        FsmState::ExtremeOperationWarning(_)
+    ));
 
     let recovered = transition(
         &warning,

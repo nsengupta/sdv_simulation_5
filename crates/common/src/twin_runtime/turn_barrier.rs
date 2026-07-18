@@ -23,8 +23,8 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
-use ractor::concurrency::JoinHandle;
 use ractor::MessagingErr;
+use ractor::concurrency::JoinHandle;
 
 use crate::digital_twin::{TwinMessage, ZoneMessage, ZoneReply};
 use crate::fsm::{AssemblyId, FsmEvent};
@@ -192,7 +192,11 @@ impl TurnBarrier {
     ///
     /// On `Retry`: caller must re-tell and call `store_retry_timer`.
     /// On `GaveUp`: caller must synthesise a reply and call `act_on_zone_reply`.
-    pub fn act_on_zone_timeout(&mut self, assembly_id: AssemblyId, tell_attempt: u32) -> TimeoutOutcome {
+    pub fn act_on_zone_timeout(
+        &mut self,
+        assembly_id: AssemblyId,
+        tell_attempt: u32,
+    ) -> TimeoutOutcome {
         // Timer has already fired — drop the stale handle, no abort() needed.
         let _ = self.zone_timers.remove(&assembly_id);
 
@@ -235,7 +239,9 @@ impl TurnBarrier {
         ResolvedTurn {
             ingress: self.event,
             now: self.now,
-            zone_replies: ZoneReplies { replies: self.zone_replies },
+            zone_replies: ZoneReplies {
+                replies: self.zone_replies,
+            },
         }
     }
 }
@@ -257,12 +263,20 @@ pub(crate) struct PassthroughBarrier {
 impl PassthroughBarrier {
     /// Create a passthrough barrier.  `is_complete()` is always `true`.
     pub fn new(turn_id: u64, event: FsmEvent, now: Instant) -> Self {
-        Self { turn_id, event, now }
+        Self {
+            turn_id,
+            event,
+            now,
+        }
     }
 
-    pub fn turn_id(&self) -> u64 { self.turn_id }
+    pub fn turn_id(&self) -> u64 {
+        self.turn_id
+    }
 
-    pub fn is_complete(&self) -> bool { true }
+    pub fn is_complete(&self) -> bool {
+        true
+    }
 
     /// Consuming decomposition into a [`ResolvedTurn`] (no zone replies).
     pub fn into_resolved_turn(self) -> ResolvedTurn {

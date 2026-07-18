@@ -4,7 +4,7 @@
 
 use std::time::Instant;
 
-use crate::fsm::{step, DomainAction, FsmEvent, FsmState, StepResult};
+use crate::fsm::{DomainAction, FsmEvent, FsmState, StepResult, step};
 use crate::twin_runtime::detectors::detect_internal_after_hop;
 use crate::twin_runtime::outcome_map::zone_outcomes_to_domain_actions;
 use crate::twin_runtime::zone_replies::ZoneReplies;
@@ -110,7 +110,8 @@ pub fn run_to_quiescence(
 
         let result = apply_single_hop(&state, &ctx, &event, now, hop_replies);
 
-        if let Some(internal) = detect_internal_after_hop(&result.next_state, &result.modified_ctx) {
+        if let Some(internal) = detect_internal_after_hop(&result.next_state, &result.modified_ctx)
+        {
             queue.push(internal);
         }
 
@@ -160,17 +161,19 @@ fn apply_external_hop(
     let mut result = step(current_state, &zone.ctx, event, now);
 
     let zone_actions = zone_outcomes_to_domain_actions(zone.outcomes);
-    result.actions = zone_actions
-        .into_iter()
-        .chain(result.actions)
-        .collect();
+    result.actions = zone_actions.into_iter().chain(result.actions).collect();
 
     // Update ledger record: prepend zone actions (domain intents like RequestFrontHeadlampOn)
     // and exclude internal coordination signals (StartAssemblies, StopAssemblies).
     let recorded_actions: Vec<DomainAction> = result
         .actions
         .iter()
-        .filter(|action| !matches!(action, DomainAction::StartAssemblies(_) | DomainAction::StopAssemblies(_)))
+        .filter(|action| {
+            !matches!(
+                action,
+                DomainAction::StartAssemblies(_) | DomainAction::StopAssemblies(_)
+            )
+        })
         .cloned()
         .collect();
     result.transition_record.actions = recorded_actions;

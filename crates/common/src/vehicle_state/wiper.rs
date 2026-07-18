@@ -77,7 +77,10 @@ impl WiperContext {
     pub fn on_receiving_message(&self, msg: WiperMessage) -> WiperZoneReply {
         let mut next = self.clone();
         let outcomes = next.apply_in_place(msg);
-        WiperZoneReply { ctx: next, outcomes }
+        WiperZoneReply {
+            ctx: next,
+            outcomes,
+        }
     }
 
     fn apply_in_place(&mut self, msg: WiperMessage) -> Vec<WiperOutcome> {

@@ -123,17 +123,18 @@ the twin's unchanged state and rejection evidence.
 
 ## Phase 3 — Observation capture library + human-readable files
 
-**Status:** Not started  
+**Status:** Done
 **Goal:** Store diagnostic + ledger as **interpretable, versioned artifacts** for engineers and replay.
 
 ### Scope
 
-1. New crate (e.g. **`observation`**) or module in `common`:
-   - Schema version, run-id, timestamp, car identity, optional scenario metadata
-   - Writers: append diagnostic + ledger rows (JSONL or agreed text format)
+1. The new L6 **`observation`** crate provides:
+   - Schema version, run-id, numeric Unix timestamps, car identity, optional scenario metadata
+   - Writers: append diagnostic + ledger rows to separate JSONL files
    - Readers: stream or load for tools / replay
-2. Gateway and/or transitional `tui_dashboard` can tee MPSC streams to **`--observation-dir`**
-   (exact CLI owner decided at kickoff).
+2. The transitional `tui_dashboard` owns receiver-side capture of both MPSC streams. It requires
+   the Twin boot diagnostic, then writes each run below the default `./observations` parent or
+   the **`--observation-dir`** override.
 3. Standalone pretty-print / summary utility (minimal CLI is fine).
 
 ### Out of scope
@@ -143,18 +144,24 @@ the twin's unchanged state and rejection evidence.
 
 ### Tests (mandatory)
 
-- [ ] Round-trip: write N rows → read back → equality
-- [ ] Schema version mismatch → clear error
-- [ ] Golden file: fixed run produces stable output (deterministic run-id override in test)
+- [x] Round-trip: write N rows → read back → equality
+- [x] Schema version mismatch → clear error
+- [x] Golden file: fixed run produces stable output (deterministic run-id override in test)
 
 ### Acceptance
 
-- Library tests pass; sample run directory committed or generated in CI artifact
+- [x] Library tests pass; sample run directory committed under
+  `crates/observation/testdata/golden/v1/`.
+- [x] Focused `observation` and `tui_dashboard` tests, plus `cargo test --workspace`, pass.
+- [x] Real default-path smoke: started actuators, Dashboard, and finite emulator on `vcan0`; quit
+  Dashboard; verified all three run files and `observation-summary`.
+- [x] Mark Phase 3 `Done` only after the real default-path smoke passes. Phase 4 remains
+  **Not started**.
 
 ### Design choices to confirm at kickoff
 
-- File layout: single JSONL vs separate `diagnostic.jsonl` + `ledger.jsonl` + `manifest.json`
-- Run-id generation (UUID vs deterministic for tests)
+- Resolved: separate `diagnostic.jsonl` + `ledger.jsonl` + `manifest.json`.
+- Resolved: UUID v4 run IDs in production; explicit deterministic run IDs in tests.
 
 ---
 

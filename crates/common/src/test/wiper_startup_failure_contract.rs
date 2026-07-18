@@ -6,13 +6,13 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::observation_records::diagnostic::DiagnosticRecord;
+use crate::VehicleController;
+use crate::digital_twin::TwinMessage;
 use crate::fsm::FsmState;
-use crate::test::{wait_fsm_state, ActorGuard};
+use crate::observation_records::diagnostic::DiagnosticRecord;
+use crate::test::{ActorGuard, wait_fsm_state};
 use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_WAIT};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
-use crate::digital_twin::TwinMessage;
-use crate::VehicleController;
 
 /// Total time for one tell-back cycle to exhaust (initial + all retries).
 fn full_exhaustion_budget() -> Duration {
@@ -62,7 +62,8 @@ async fn given_silent_wiper_when_startup_tell_back_exhausted_then_warning_on_dia
     let messages = drain_diagnostics(&mut diag_rx, Duration::from_millis(50)).await;
 
     let has_wiper_warning = messages.iter().any(|m| {
-        m.message.to_lowercase().contains("wiper") && m.level == crate::observation_records::diagnostic::DiagnosticLevel::Warning
+        m.message.to_lowercase().contains("wiper")
+            && m.level == crate::observation_records::diagnostic::DiagnosticLevel::Warning
     });
     assert!(
         has_wiper_warning,

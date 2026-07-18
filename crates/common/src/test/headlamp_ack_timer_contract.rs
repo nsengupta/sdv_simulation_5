@@ -7,15 +7,17 @@ use crate::fsm::{FsmEvent, FsmState, HeadlampState};
 use crate::observation_records::transition::{
     PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedOperational,
 };
-use crate::test::{power_on_to_idle, submit_daylight_ambient, wait_fsm_state, wait_headlamp_state, ActorGuard};
+use crate::test::{
+    ActorGuard, power_on_to_idle, submit_daylight_ambient, wait_fsm_state, wait_headlamp_state,
+};
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_physics::{FRONT_HEADLAMP_ON_ACK_WAIT, RPM_DRIVING_THRESHOLD};
 use crate::{TwinIngressEvent, VehicleController, VssSignal};
 use tokio::sync::mpsc;
 
 #[tokio::test]
-async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_then_two_ledger_rows_and_driving_dangerously(
-) {
+async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_then_two_ledger_rows_and_driving_dangerously()
+ {
     let (transition_tx, mut rx) = mpsc::channel(16);
     let runtime_options = VehicleControllerRuntimeOptions {
         transition_tx: Some(transition_tx),
@@ -36,7 +38,10 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_th
     // Phase 7: bridge to Idle, drain THREE startup rows (PowerOn + Headlamp Ready + Wiper Ready).
     power_on_to_idle(&controller).await;
     let _ = rx.recv().await.expect("power on → preparing row");
-    let _ = rx.recv().await.expect("headlamp zone ready → preparing row");
+    let _ = rx
+        .recv()
+        .await
+        .expect("headlamp zone ready → preparing row");
     let _ = rx.recv().await.expect("wiper zone ready → idle row");
 
     submit_daylight_ambient(&controller).await;
@@ -49,18 +54,24 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_th
     let _ = rx.recv().await.expect("rpm row");
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux");
     let lux_row = rx.recv().await.expect("lux row");
     assert_eq!(lux_row.next_state, PublishedFsmState::Driving);
-    wait_headlamp_state(&controller, HeadlampState::OnRequested, Duration::from_secs(1)).await;
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::OnRequested,
+        Duration::from_secs(1),
+    )
+    .await;
 
     tokio::time::sleep(FRONT_HEADLAMP_ON_ACK_WAIT + Duration::from_millis(25)).await;
 
-    let hop1 = rx.recv().await.expect("spontaneous incomplete hop ledger row");
+    let hop1 = rx
+        .recv()
+        .await
+        .expect("spontaneous incomplete hop ledger row");
     let hop2 = rx.recv().await.expect("internal hop ledger row");
 
     assert!(
@@ -78,8 +89,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_th
     ));
     assert_eq!(hop2.next_state, PublishedFsmState::DrivingDangerously);
     assert!(
-        hop2
-            .actions
+        hop2.actions
             .iter()
             .any(|a| matches!(a, PublishedDomainAction::StartBuzzer)),
         "internal hop row must carry StartBuzzer, got {:?}",
@@ -120,23 +130,26 @@ async fn given_actor_on_requested_when_ack_before_deadline_then_no_spontaneous_i
     // Phase 7: bridge to Idle, drain THREE startup rows (PowerOn + Headlamp Ready + Wiper Ready).
     power_on_to_idle(&controller).await;
     let _ = rx.recv().await.expect("power on → preparing row");
-    let _ = rx.recv().await.expect("headlamp zone ready → preparing row");
+    let _ = rx
+        .recv()
+        .await
+        .expect("headlamp zone ready → preparing row");
     let _ = rx.recv().await.expect("wiper zone ready → idle row");
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux");
     let _ = rx.recv().await.expect("lux row");
-    wait_headlamp_state(&controller, HeadlampState::OnRequested, Duration::from_secs(1)).await;
-
-    let command = crate::test::expect_actuation_command(
-        &mut actuation_rx,
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::OnRequested,
         Duration::from_secs(1),
     )
     .await;
+
+    let command =
+        crate::test::expect_actuation_command(&mut actuation_rx, Duration::from_secs(1)).await;
     crate::test::inject_matching_ack(&controller, &command).await;
     let ack_row = rx.recv().await.expect("ack row");
     assert!(

@@ -12,13 +12,13 @@
 
 use std::time::Duration;
 
+use crate::VehicleController;
 use crate::digital_twin::{TwinMessage, ZoneMessage, ZoneReply};
-use crate::fsm::{FsmEvent, FsmState, AssemblyId};
+use crate::fsm::{AssemblyId, FsmEvent, FsmState};
 use crate::test::ActorGuard;
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::twin_runtime::zone_turn::zone_message_for_event;
 use crate::vehicle_state::{WiperContext, WiperMessage, WiperState, WiperZoneReply};
-use crate::VehicleController;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,9 @@ fn inject_wiper_zone_ready(controller: &VehicleController, turn_id: u64) {
             turn_id,
             tell_attempt: 0,
             reply: ZoneReply::Wiper(WiperZoneReply {
-                ctx: WiperContext { state: WiperState::Ready },
+                ctx: WiperContext {
+                    state: WiperState::Ready,
+                },
                 outcomes: vec![],
             }),
         })
@@ -86,21 +88,25 @@ fn inject_headlamp_zone_ready_startup(controller: &VehicleController) {
             turn_id: HEADLAMP_STARTUP_TURN,
             tell_attempt: 0,
             reply: ZoneReply::Headlamp(HeadlampZoneReply {
-                ctx: HeadlampContext { state: HeadlampState::Ready, ack_pending_since: None },
+                ctx: HeadlampContext {
+                    state: HeadlampState::Ready,
+                    ack_pending_since: None,
+                },
                 outcomes: vec![],
             }),
         })
         .expect("inject_headlamp_zone_ready_startup");
 }
 
-async fn spawn_non_silent(
-    identity: &str,
-) -> (VehicleController, ActorGuard<TwinMessage>) {
+async fn spawn_non_silent(identity: &str) -> (VehicleController, ActorGuard<TwinMessage>) {
     let (controller, handle) =
         VehicleController::install_and_start_with_options(identity.to_string(), Default::default())
             .await
             .expect("spawn non-silent");
-    let guard = ActorGuard { addr: controller.get_actor_ref().clone(), handle };
+    let guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
     (controller, guard)
 }
 
@@ -121,7 +127,10 @@ async fn spawn_silent_wiper(
         VehicleController::install_and_start_with_options(identity.to_string(), opts)
             .await
             .expect("spawn silent-wiper");
-    let guard = ActorGuard { addr: controller.get_actor_ref().clone(), handle };
+    let guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
     (controller, rx, guard)
 }
 
@@ -143,12 +152,17 @@ async fn spawn_silent_both(
         VehicleController::install_and_start_with_options(identity.to_string(), opts)
             .await
             .expect("spawn silent-both");
-    let guard = ActorGuard { addr: controller.get_actor_ref().clone(), handle };
+    let guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
     (controller, rx, guard)
 }
 
 async fn drain_n(
-    rx: &mut tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
+    rx: &mut tokio::sync::mpsc::Receiver<
+        crate::observation_records::transition::PublishedTransitionRecord,
+    >,
     n: usize,
     timeout: Duration,
 ) -> Vec<crate::observation_records::transition::PublishedTransitionRecord> {
@@ -164,7 +178,9 @@ async fn drain_n(
 }
 
 async fn assert_no_row(
-    rx: &mut tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
+    rx: &mut tokio::sync::mpsc::Receiver<
+        crate::observation_records::transition::PublishedTransitionRecord,
+    >,
     window: Duration,
 ) {
     match tokio::time::timeout(window, rx.recv()).await {
@@ -178,7 +194,9 @@ async fn assert_no_row(
 /// Drains the 3 resulting ledger rows: PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
 async fn boot_silent_both(
     controller: &VehicleController,
-    rx: &mut tokio::sync::mpsc::Receiver<crate::observation_records::transition::PublishedTransitionRecord>,
+    rx: &mut tokio::sync::mpsc::Receiver<
+        crate::observation_records::transition::PublishedTransitionRecord,
+    >,
 ) {
     controller.send_power_on().await.expect("power on");
     tokio::task::yield_now().await;
@@ -216,8 +234,14 @@ fn given_rains_started_in_driving_when_zone_routed_then_wiper_start_message() {
 
 #[test]
 fn given_rains_started_in_preparing_to_start_when_zone_routed_then_none() {
-    let result = zone_message_for_event(&FsmEvent::RainsStarted, &FsmState::PreparingToStart(std::collections::BTreeSet::new()));
-    assert!(result.is_none(), "expected None during PreparingToStart, got {result:?}");
+    let result = zone_message_for_event(
+        &FsmEvent::RainsStarted,
+        &FsmState::PreparingToStart(std::collections::BTreeSet::new()),
+    );
+    assert!(
+        result.is_none(),
+        "expected None during PreparingToStart, got {result:?}"
+    );
 }
 
 // ── Test 4: BecomeOn → Ready ──────────────────────────────────────────────────
@@ -342,7 +366,10 @@ async fn given_headlamp_then_wiper_events_when_replies_out_of_order_then_fifo_co
             turn_id: FIRST_USER_TURN,
             tell_attempt: 0,
             reply: ZoneReply::Headlamp(HeadlampZoneReply {
-                ctx: HeadlampContext { state: HeadlampState::Ready, ack_pending_since: None },
+                ctx: HeadlampContext {
+                    state: HeadlampState::Ready,
+                    ack_pending_since: None,
+                },
                 outcomes: vec![],
             }),
         })
@@ -389,7 +416,11 @@ async fn given_silent_wiper_when_headlamp_lux_then_rains_then_headlamp_commits_f
     // Headlamp auto-replies for turn 4.
     // Turn 4 (headlamp lux) must commit before turn 5 (wiper rains) even though wiper is slow.
     let rows = drain_n(&mut rx, 1, Duration::from_millis(500)).await;
-    assert_eq!(rows.len(), 1, "headlamp lux event must commit before wiper turn resolves");
+    assert_eq!(
+        rows.len(),
+        1,
+        "headlamp lux event must commit before wiper turn resolves"
+    );
 
     // Wiper turn 5 is still pending — inject manually to clean up.
     inject_wiper_zone_ready(&controller, FIRST_USER_TURN + 1);

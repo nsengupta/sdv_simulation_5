@@ -1,11 +1,11 @@
-use std::collections::BTreeSet;
 use super::machineries::{ALL_ASSEMBLIES, AssemblyId, FsmAction, FsmEvent, FsmState, Operational};
-use crate::vehicle_state::{HeadlampState, VehicleContext};
 use crate::vehicle_physics::{
-    extreme_operation_active, speed_threshold_exceeded, EXTREME_OPERATION_WARNING_MESSAGE,
-    LUX_ON_THRESHOLD, RPM_DRIVING_THRESHOLD, RPM_STRESS_DURATION_THRESHOLD_SECS,
-    SPEED_THRESHOLD_WARNING_MESSAGE,
+    EXTREME_OPERATION_WARNING_MESSAGE, LUX_ON_THRESHOLD, RPM_DRIVING_THRESHOLD,
+    RPM_STRESS_DURATION_THRESHOLD_SECS, SPEED_THRESHOLD_WARNING_MESSAGE, extreme_operation_active,
+    speed_threshold_exceeded,
 };
+use crate::vehicle_state::{HeadlampState, VehicleContext};
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 /// Operational mode transition table.
@@ -55,62 +55,95 @@ pub fn transition(
 
     match current_state {
         Off => match event {
-            PowerOn if current_ctx.is_healthy() => {
-                TransitionResult {
-                    next_state: PreparingToStart(ALL_ASSEMBLIES.iter().copied().collect()),
-                    note: None,
-                }
-            }
-            PowerOff => TransitionResult { next_state: Off, note: Some(TransitionNote::RejectedPowerOff) },
-            _ => TransitionResult { next_state: Off, note: None },
+            PowerOn if current_ctx.is_healthy() => TransitionResult {
+                next_state: PreparingToStart(ALL_ASSEMBLIES.iter().copied().collect()),
+                note: None,
+            },
+            PowerOff => TransitionResult {
+                next_state: Off,
+                note: Some(TransitionNote::RejectedPowerOff),
+            },
+            _ => TransitionResult {
+                next_state: Off,
+                note: None,
+            },
         },
         PreparingToStart(remaining) => match event {
             AssemblyZoneReady(assembly_id) => {
-                let new_remaining: BTreeSet<AssemblyId> =
-                    remaining.iter().copied().filter(|a| a != assembly_id).collect();
+                let new_remaining: BTreeSet<AssemblyId> = remaining
+                    .iter()
+                    .copied()
+                    .filter(|a| a != assembly_id)
+                    .collect();
                 if new_remaining.is_empty() {
-                    TransitionResult { next_state: Idle, note: None }
+                    TransitionResult {
+                        next_state: Idle,
+                        note: None,
+                    }
                 } else {
-                    TransitionResult { next_state: PreparingToStart(new_remaining), note: None }
+                    TransitionResult {
+                        next_state: PreparingToStart(new_remaining),
+                        note: None,
+                    }
                 }
             }
-            _ => TransitionResult { next_state: PreparingToStart(remaining.clone()), note: None },
+            _ => TransitionResult {
+                next_state: PreparingToStart(remaining.clone()),
+                note: None,
+            },
         },
         Idle => match event {
             PowerOff => TransitionResult {
                 next_state: PreparingToStop(ALL_ASSEMBLIES.iter().copied().collect()),
                 note: None,
             },
-            UpdateRpm(rpm) if *rpm > RPM_DRIVING_THRESHOLD => {
-                TransitionResult { next_state: Driving, note: None }
-            }
-            _ => TransitionResult { next_state: Idle, note: None },
+            UpdateRpm(rpm) if *rpm > RPM_DRIVING_THRESHOLD => TransitionResult {
+                next_state: Driving,
+                note: None,
+            },
+            _ => TransitionResult {
+                next_state: Idle,
+                note: None,
+            },
         },
         Driving => match event {
             Internal(Operational::LightingUnsafe) => TransitionResult {
                 next_state: DrivingDangerously,
                 note: None,
             },
-            PowerOff => TransitionResult { next_state: Driving, note: Some(TransitionNote::RejectedPowerOff) },
-            _ if current_ctx.powertrain.is_operational_warning_active() => {
-                TransitionResult { next_state: ExtremeOperationWarning(now), note: None }
-            }
-            _ if current_ctx.powertrain.is_stationary() => TransitionResult { next_state: Idle, note: None },
-            _ => TransitionResult { next_state: Driving, note: None },
+            PowerOff => TransitionResult {
+                next_state: Driving,
+                note: Some(TransitionNote::RejectedPowerOff),
+            },
+            _ if current_ctx.powertrain.is_operational_warning_active() => TransitionResult {
+                next_state: ExtremeOperationWarning(now),
+                note: None,
+            },
+            _ if current_ctx.powertrain.is_stationary() => TransitionResult {
+                next_state: Idle,
+                note: None,
+            },
+            _ => TransitionResult {
+                next_state: Driving,
+                note: None,
+            },
         },
         DrivingDangerously => match event {
             PowerOff => TransitionResult {
                 next_state: DrivingDangerously,
                 note: Some(TransitionNote::RejectedPowerOff),
             },
-            _ if current_ctx.powertrain.is_stationary() => {
-                TransitionResult { next_state: Idle, note: None }
+            _ if current_ctx.powertrain.is_stationary() => TransitionResult {
+                next_state: Idle,
+                note: None,
             },
-            _ if current_ctx.headlamp.state == HeadlampState::On => {
-                TransitionResult { next_state: Driving, note: None }
+            _ if current_ctx.headlamp.state == HeadlampState::On => TransitionResult {
+                next_state: Driving,
+                note: None,
             },
-            _ if current_ctx.visibility.ambient_lux > LUX_ON_THRESHOLD => {
-                TransitionResult { next_state: Driving, note: None }
+            _ if current_ctx.visibility.ambient_lux > LUX_ON_THRESHOLD => TransitionResult {
+                next_state: Driving,
+                note: None,
             },
             _ => TransitionResult {
                 next_state: DrivingDangerously,
@@ -119,28 +152,57 @@ pub fn transition(
         },
         ExtremeOperationWarning(began_at) => match event {
             TimerTick if operational_warning_recovery_ready(*began_at, now, current_ctx) => {
-                let next_state = if current_ctx.powertrain.is_stationary() { Idle } else { Driving };
-                TransitionResult { next_state, note: None }
+                let next_state = if current_ctx.powertrain.is_stationary() {
+                    Idle
+                } else {
+                    Driving
+                };
+                TransitionResult {
+                    next_state,
+                    note: None,
+                }
             }
-            PowerOff => TransitionResult { next_state: ExtremeOperationWarning(*began_at), note: Some(TransitionNote::RejectedPowerOff) },
-            _ => TransitionResult { next_state: ExtremeOperationWarning(*began_at), note: None },
+            PowerOff => TransitionResult {
+                next_state: ExtremeOperationWarning(*began_at),
+                note: Some(TransitionNote::RejectedPowerOff),
+            },
+            _ => TransitionResult {
+                next_state: ExtremeOperationWarning(*began_at),
+                note: None,
+            },
         },
         PreparingToStop(remaining) => match event {
             AssemblyZoneReady(assembly_id) => {
-                let new_remaining: BTreeSet<AssemblyId> =
-                    remaining.iter().copied().filter(|a| a != assembly_id).collect();
+                let new_remaining: BTreeSet<AssemblyId> = remaining
+                    .iter()
+                    .copied()
+                    .filter(|a| a != assembly_id)
+                    .collect();
                 if new_remaining.is_empty() {
-                    TransitionResult { next_state: Off, note: None }
+                    TransitionResult {
+                        next_state: Off,
+                        note: None,
+                    }
                 } else {
-                    TransitionResult { next_state: PreparingToStop(new_remaining), note: None }
+                    TransitionResult {
+                        next_state: PreparingToStop(new_remaining),
+                        note: None,
+                    }
                 }
             }
-            _ => TransitionResult { next_state: PreparingToStop(remaining.clone()), note: None },
+            _ => TransitionResult {
+                next_state: PreparingToStop(remaining.clone()),
+                note: None,
+            },
         },
     }
 }
 
-fn operational_warning_recovery_ready(began_at: Instant, now: Instant, ctx: &VehicleContext) -> bool {
+fn operational_warning_recovery_ready(
+    began_at: Instant,
+    now: Instant,
+    ctx: &VehicleContext,
+) -> bool {
     let warning_age = now
         .checked_duration_since(began_at)
         .unwrap_or(Duration::ZERO);

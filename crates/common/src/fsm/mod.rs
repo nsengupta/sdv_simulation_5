@@ -10,8 +10,8 @@ pub mod transition_map;
 
 pub use crate::vehicle_state::HeadlampState;
 pub use machineries::{
-    AssemblyId, DomainAction, FrontHeadlampIncompleteCause,
-    FrontHeadlampSwitchDirection, FsmAction, FsmEvent, FsmState, Operational,
+    AssemblyId, DomainAction, FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection,
+    FsmAction, FsmEvent, FsmState, Operational,
 };
-pub use step::{step, StepResult, RawTransitionRecord};
-pub use transition_map::{output, transition, TransitionNote, TransitionResult};
+pub use step::{RawTransitionRecord, StepResult, step};
+pub use transition_map::{TransitionNote, TransitionResult, output, transition};

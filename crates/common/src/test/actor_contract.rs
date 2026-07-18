@@ -1,15 +1,15 @@
 //! Actor-oriented contract tests (mailbox -> step -> persistence/emit sequencing).
 
 use crate::digital_twin::TwinMessage;
-use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::fsm::{FsmEvent, FsmState, HeadlampState};
-use crate::{PublishedFsmEvent, PublishedFsmState};
 use crate::test::{
-    expect_actuation_command, inject_matching_ack, inject_matching_nack,
-    power_on_to_idle, ActorGuard,
+    ActorGuard, expect_actuation_command, inject_matching_ack, inject_matching_nack,
+    power_on_to_idle,
 };
+use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
 use crate::vehicle_state::VehicleContext;
 use crate::{ActuationCommand, TwinIngressEvent, VehicleController, VssSignal};
+use crate::{PublishedFsmEvent, PublishedFsmState};
 use ractor::concurrency::Duration;
 use tokio::sync::mpsc;
 
@@ -132,12 +132,20 @@ async fn scenario_raw_transition_records_are_emitted_in_order() {
     // Drain all three before queuing user events.
     power_on_to_idle(&controller).await;
     let row1 = rx.recv().await.expect("Missing row 1 (PowerOn)");
-    let row2 = rx.recv().await.expect("Missing row 2 (AssemblyZoneReady Headlamp)");
-    let row3 = rx.recv().await.expect("Missing row 3 (AssemblyZoneReady Wiper → Idle)");
+    let row2 = rx
+        .recv()
+        .await
+        .expect("Missing row 2 (AssemblyZoneReady Headlamp)");
+    let row3 = rx
+        .recv()
+        .await
+        .expect("Missing row 3 (AssemblyZoneReady Wiper → Idle)");
 
     // Now queue lux + rpm events; actor is in Idle.
     actor_ref
-        .send_message(FsmEvent::UpdateAmbientLux(crate::vehicle_physics::LUX_ON_THRESHOLD + 100).into())
+        .send_message(
+            FsmEvent::UpdateAmbientLux(crate::vehicle_physics::LUX_ON_THRESHOLD + 100).into(),
+        )
         .expect("bright lux to prevent LightingUnsafe synthesis in Driving");
     actor_ref
         .send_message(FsmEvent::UpdateRpm(1500).into())
@@ -170,8 +178,8 @@ async fn scenario_raw_transition_records_are_emitted_in_order() {
     assert_eq!(row5.current_ctx.powertrain.wheel_rpm.front_left, 1500);
 
     // All records share one run (session epoch) and advance monotonically in wall time.
-    assert_eq!(row1.session_start_unix_nanos, row5.session_start_unix_nanos);
-    assert!(row5.recorded_at_unix >= row1.recorded_at_unix);
+    assert_eq!(row1.session_started_at, row5.session_started_at);
+    assert!(row5.recorded_at >= row1.recorded_at);
 
     let twin_snapshot = actor_ref
         .call(
@@ -184,12 +192,17 @@ async fn scenario_raw_transition_records_are_emitted_in_order() {
 
     let ctx = twin_snapshot.context();
     assert_eq!(
-        row5.current_ctx.powertrain.wheel_rpm.front_left,
-        ctx.powertrain.wheel_rpm.front_left,
+        row5.current_ctx.powertrain.wheel_rpm.front_left, ctx.powertrain.wheel_rpm.front_left,
         "emitted current_ctx must match persisted actor context after transition"
     );
-    assert_eq!(row5.current_ctx.powertrain.speed_kph, ctx.powertrain.speed_kph);
-    assert_eq!(row5.current_ctx.visibility.ambient_lux, ctx.visibility.ambient_lux);
+    assert_eq!(
+        row5.current_ctx.powertrain.speed_kph,
+        ctx.powertrain.speed_kph
+    );
+    assert_eq!(
+        row5.current_ctx.visibility.ambient_lux,
+        ctx.visibility.ambient_lux
+    );
 }
 
 #[tokio::test]
@@ -230,8 +243,7 @@ async fn scenario_log_warning_is_routed_to_diagnostic_sink() {
     }
 
     let mut saw_warning = false;
-    while let Ok(Some(msg)) =
-        tokio::time::timeout(Duration::from_millis(250), diag_rx.recv()).await
+    while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(250), diag_rx.recv()).await
     {
         if msg.level == crate::DiagnosticLevel::Warning
             && msg.message.contains(crate::SPEED_THRESHOLD_WARNING_MESSAGE)
@@ -256,10 +268,12 @@ async fn scenario_actuation_ack_round_trip_via_helper() {
         actuation_command_tx: Some(actuation_tx),
         ..Default::default()
     };
-    let (controller, handle) =
-        VehicleController::install_and_start_with_options("ACT-ACK-01".to_string(), runtime_options)
-            .await
-            .expect("start actor");
+    let (controller, handle) = VehicleController::install_and_start_with_options(
+        "ACT-ACK-01".to_string(),
+        runtime_options,
+    )
+    .await
+    .expect("start actor");
     let _guard = ActorGuard {
         addr: controller.get_actor_ref().clone(),
         handle,
@@ -268,9 +282,7 @@ async fn scenario_actuation_ack_round_trip_via_helper() {
     // Phase 1: bridge to Idle before sending lux (lux in PreparingToStart is a no-op).
     power_on_to_idle(&controller).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux event");
 
@@ -320,21 +332,16 @@ async fn scenario_actuation_ack_surfaces_confirmation_on_diagnostic_sink() {
     // Phase 1: bridge to Idle before sending lux.
     power_on_to_idle(&controller).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux event requests headlamp ON");
     controller
-        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandConfirmed {
-            on_command: true,
-        })
+        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true })
         .await
         .expect("inject matching ON ack");
 
     let mut saw_confirmation = false;
-    while let Ok(Some(msg)) =
-        tokio::time::timeout(Duration::from_millis(250), diag_rx.recv()).await
+    while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(250), diag_rx.recv()).await
     {
         if msg.level == crate::DiagnosticLevel::Info && msg.message.contains(crate::MSG_ACK_ON) {
             saw_confirmation = true;
@@ -355,10 +362,12 @@ async fn scenario_actuation_nack_round_trip_via_helper() {
         actuation_command_tx: Some(actuation_tx),
         ..Default::default()
     };
-    let (controller, handle) =
-        VehicleController::install_and_start_with_options("ACT-NACK-01".to_string(), runtime_options)
-            .await
-            .expect("start actor");
+    let (controller, handle) = VehicleController::install_and_start_with_options(
+        "ACT-NACK-01".to_string(),
+        runtime_options,
+    )
+    .await
+    .expect("start actor");
     let _guard = ActorGuard {
         addr: controller.get_actor_ref().clone(),
         handle,
@@ -367,9 +376,7 @@ async fn scenario_actuation_nack_round_trip_via_helper() {
     // Phase 1: bridge to Idle before sending lux.
     power_on_to_idle(&controller).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux event");
 
@@ -381,8 +388,12 @@ async fn scenario_actuation_nack_round_trip_via_helper() {
 
     inject_matching_nack(&controller, &command).await;
     // Phase 2: NACK on ON request → ActuationIncomplete(On) → Ready (assembly active, lamp dark).
-    crate::test::wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(250))
-        .await;
+    crate::test::wait_headlamp_state(
+        &controller,
+        HeadlampState::Ready,
+        Duration::from_millis(250),
+    )
+    .await;
 
     let snapshot = controller
         .get_snapshot(Some(Duration::from_millis(250)))

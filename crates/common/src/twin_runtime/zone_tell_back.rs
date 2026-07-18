@@ -1,8 +1,8 @@
 //! Brain↔zone tell-back wait: retry, synthetic embed on exhaustion (ADR-7 step 6+).
 
+use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_MAX_RETRIES};
 use crate::vehicle_state::{HeadlampContext, HeadlampOutcome, HeadlampZoneReply};
 use crate::vehicle_state::{WiperContext, WiperOutcome, WiperZoneReply};
-use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_MAX_RETRIES};
 
 /// One in-flight tell-back wait (correlation for reply vs timeout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +36,10 @@ pub enum TellBackTimeoutOutcome {
 }
 
 /// Decide retry vs synthetic embed after one tell-back timeout.
-pub fn on_tell_back_timeout(headlamp_ctx: &HeadlampContext, wait: TellBackWait) -> TellBackTimeoutOutcome {
+pub fn on_tell_back_timeout(
+    headlamp_ctx: &HeadlampContext,
+    wait: TellBackWait,
+) -> TellBackTimeoutOutcome {
     if wait.retries_remaining > 0 {
         TellBackTimeoutOutcome::Retry(TellBackWait {
             turn_id: wait.turn_id,

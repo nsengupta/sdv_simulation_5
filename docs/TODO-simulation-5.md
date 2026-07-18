@@ -7,7 +7,7 @@ Detailed design notes for each item live in `brain_fsm_redesign_impl_Phase_10.md
 
 ## 1. CAN emulation for `PowerOn` / `PowerOff`
 
-**Status:** Gateway codec and twin ingress implemented in **[`PHASES.md` Phase 1](PHASES.md#phase-1--can-lifecycle--silent-ignore-while-off)**; manual `vcan0` smoke pending.  
+**Status:** Done in **[`PHASES.md` Phase 1](PHASES.md#phase-1--can-lifecycle--silent-ignore-while-off)**, including the manual `vcan0` smoke gate.  
 **Reference:** `brain_fsm_redesign_impl_Phase_10.md` Item C; `analysis_4_response.md` Stage 1.
 
 `PowerOn` and `PowerOff` events are currently injected programmatically.
@@ -112,3 +112,13 @@ Required tests (spawn `VirtualCarActor`, exercise the full message loop):
 2. **Queue drain invariant** — inject events while a barrier is pending; assert
    `barrier_queue` drains to empty once all `AssemblyZoneReady` events arrive.
 3. **No-panic property** — any sequence of valid ractor messages must not crash the actor.
+
+---
+
+## Dashboard Tokio event loop
+
+**Status:** Deferred after Phase 3.
+
+Replace drain/draw/50-ms keyboard polling with a `tokio::select!` loop over observation arrival,
+keyboard/control events, and a render interval. Preserve capture of every record while allowing
+future keystroke-based driver controls. This is not part of Phase 3 observation persistence.

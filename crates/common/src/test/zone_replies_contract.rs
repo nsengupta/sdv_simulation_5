@@ -3,10 +3,10 @@
 use std::time::Instant;
 
 use crate::digital_twin::ZoneReply;
-use crate::fsm::{FsmEvent, FsmState, HeadlampState, AssemblyId};
-use crate::twin_runtime::{commit_resolved_turn, twin_turn, ResolvedTurn, ZoneReplies};
-use crate::vehicle_state::{HeadlampContext, HeadlampZoneReply, VehicleContext};
+use crate::fsm::{AssemblyId, FsmEvent, FsmState, HeadlampState};
+use crate::twin_runtime::{ResolvedTurn, ZoneReplies, commit_resolved_turn, twin_turn};
 use crate::vehicle_physics::{FRONT_HEADLAMP_ON_ACK_WAIT, RPM_DRIVING_THRESHOLD};
+use crate::vehicle_state::{HeadlampContext, HeadlampZoneReply, VehicleContext};
 
 fn driving_ctx() -> VehicleContext {
     let mut ctx = VehicleContext::default();
@@ -35,16 +35,13 @@ fn test_zone_replies_simulate_locally_is_empty() {
 #[test]
 fn test_power_off_does_not_speculatively_run_zone_turn() {
     let ctx = VehicleContext::default();
-    let result = twin_turn(
-        &FsmState::Idle,
-        &ctx,
-        &FsmEvent::PowerOff,
-        Instant::now(),
-    );
-    assert!(matches!(result.next_state, FsmState::PreparingToStop { .. }));
+    let result = twin_turn(&FsmState::Idle, &ctx, &FsmEvent::PowerOff, Instant::now());
+    assert!(matches!(
+        result.next_state,
+        FsmState::PreparingToStop { .. }
+    ));
     assert_eq!(
-        result.modified_ctx.headlamp.state,
-        ctx.headlamp.state,
+        result.modified_ctx.headlamp.state, ctx.headlamp.state,
         "PowerOff must not mutate headlamp state (no speculative IgnitionOffReset)"
     );
 }
@@ -53,7 +50,10 @@ fn test_power_off_does_not_speculatively_run_zone_turn() {
 fn test_zone_replies_with_reply_is_non_default_constructor() {
     // Phase 7: `with_reply` replaces the deleted `with_headlamp_ingress`.
     let embed = HeadlampZoneReply {
-        ctx: HeadlampContext { state: HeadlampState::On, ack_pending_since: None },
+        ctx: HeadlampContext {
+            state: HeadlampState::On,
+            ack_pending_since: None,
+        },
         outcomes: vec![],
     };
     let r = ZoneReplies::with_reply(AssemblyId::Headlamp, ZoneReply::Headlamp(embed.clone()));
@@ -76,14 +76,19 @@ fn test_zone_replies_map_get_returns_none_for_absent_zone() {
 fn test_zone_replies_with_reply_stores_and_retrieves() {
     use crate::vehicle_state::{HeadlampContext, HeadlampState, HeadlampZoneReply};
     let embed = HeadlampZoneReply {
-        ctx: HeadlampContext { state: HeadlampState::On, ack_pending_since: None },
+        ctx: HeadlampContext {
+            state: HeadlampState::On,
+            ack_pending_since: None,
+        },
         outcomes: vec![],
     };
     let r = ZoneReplies::with_reply(
         crate::fsm::AssemblyId::Headlamp,
         crate::digital_twin::ZoneReply::Headlamp(embed.clone()),
     );
-    let got = r.get(&crate::fsm::AssemblyId::Headlamp).expect("must be present");
+    let got = r
+        .get(&crate::fsm::AssemblyId::Headlamp)
+        .expect("must be present");
     assert_eq!(got.as_headlamp(), Some(&embed));
 }
 

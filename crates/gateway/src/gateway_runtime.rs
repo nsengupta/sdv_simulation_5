@@ -19,11 +19,11 @@
 //! 5. (Gateway) `.run()` = `install_controller()` + `spawn_runtime()` + await dispatch
 
 use anyhow::Result;
+use common::DiagnosticRecord;
 use common::facade::{
     ActuationCommand, PublishedTransitionRecord, TwinIngressEvent, VehicleController,
     VehicleControllerRuntimeOptions, VssSignal, spawn_stdout_diagnostic_observer,
 };
-use common::DiagnosticRecord;
 use socketcan::{CanSocket, Socket};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -163,7 +163,9 @@ impl TwinRuntimeBuilder {
     /// and spawns the `VehicleController` with all configured channels.
     ///
     /// Must be called before [`spawn_runtime()`](Self::spawn_runtime).
-    pub async fn install_controller(&mut self) -> Result<(VehicleController, VehicleControllerRuntimeOptions)> {
+    pub async fn install_controller(
+        &mut self,
+    ) -> Result<(VehicleController, VehicleControllerRuntimeOptions)> {
         let identity = self
             .car_identity
             .clone()
@@ -179,12 +181,10 @@ impl TwinRuntimeBuilder {
             ..VehicleControllerRuntimeOptions::default()
         };
 
-        let (controller, _join) = VehicleController::install_and_start_with_options(
-            identity,
-            runtime_options.clone(),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("install controller: {e}"))?;
+        let (controller, _join) =
+            VehicleController::install_and_start_with_options(identity, runtime_options.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("install controller: {e}"))?;
 
         // Store actuation receiver so spawn_runtime can find it.
         self.actuation_cmd_rx = Some(actuation_cmd_rx);
@@ -204,10 +204,9 @@ impl TwinRuntimeBuilder {
         let headlamp_policy = self.headlamp_policy.clone();
         let trace_actuation_ingress = self.trace_actuation_ingress;
         let auto_power_on = self.auto_power_on();
-        let actuation_cmd_rx = self
-            .actuation_cmd_rx
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("install_controller must be called before spawn_runtime"))?;
+        let actuation_cmd_rx = self.actuation_cmd_rx.take().ok_or_else(|| {
+            anyhow::anyhow!("install_controller must be called before spawn_runtime")
+        })?;
 
         // Off-hot-path ingress logger: a frozen console must not block ACK delivery to the twin.
         let ingress_log_tx = {
@@ -237,9 +236,7 @@ impl TwinRuntimeBuilder {
         )?;
 
         // Print startup banners
-        println!(
-            "⚡ Gateway on {can_interface} — CAN → TwinIngressEvent → VehicleController"
-        );
+        println!("⚡ Gateway on {can_interface} — CAN → TwinIngressEvent → VehicleController");
         println!(
             "[gateway] front-headlamp + wiper CMD egress on CAN; \
              run `cargo run -p front_headlamp_actuator` and `cargo run -p wiper_actuator`"
@@ -385,7 +382,11 @@ fn spawn_actuation_command_publishers(
         }
     });
 
-    spawn_front_headlamp_command_publisher(headlamp_rx, can_interface.clone(), front_headlamp_policy);
+    spawn_front_headlamp_command_publisher(
+        headlamp_rx,
+        can_interface.clone(),
+        front_headlamp_policy,
+    );
     spawn_wiper_command_publisher(wiper_rx, can_interface);
 }
 
@@ -438,7 +439,10 @@ fn spawn_wiper_command_publisher(
             }
         };
         while let Some(cmd) = actuation_cmd_rx.recv().await {
-            if !matches!(cmd, ActuationCommand::StartWiper | ActuationCommand::StopWiper) {
+            if !matches!(
+                cmd,
+                ActuationCommand::StartWiper | ActuationCommand::StopWiper
+            ) {
                 continue;
             }
             match encode_wiper_command_frame(&cmd) {
@@ -460,18 +464,10 @@ fn format_front_headlamp_ingress(
     twin_ingress: &TwinIngressEvent,
 ) -> Option<String> {
     let (icon, msg) = match twin_ingress {
-        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true } => {
-            ("✓", "ACK_ON")
-        }
-        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: false } => {
-            ("✓", "ACK_OFF")
-        }
-        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true } => {
-            ("✗", "NACK_ON")
-        }
-        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: false } => {
-            ("✗", "NACK_OFF")
-        }
+        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true } => ("✓", "ACK_ON"),
+        TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: false } => ("✓", "ACK_OFF"),
+        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true } => ("✗", "NACK_ON"),
+        TwinIngressEvent::FrontHeadlampCommandRejected { on_command: false } => ("✗", "NACK_OFF"),
         _ => return None,
     };
     Some(format!(

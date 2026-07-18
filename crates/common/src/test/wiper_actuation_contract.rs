@@ -5,19 +5,21 @@
 use std::time::Duration;
 
 use crate::digital_twin::DigitalTwinCar;
+use crate::fsm::DomainAction;
 use crate::fsm::FsmState;
 use crate::test::{
     expect_actuation_command, install_with_actuation, power_on_to_idle,
     wiper_zone_contract::wait_wiper_state,
 };
-use crate::vehicle_state::{VehicleContext, WiperState};
-use crate::{TwinIngressEvent, VssSignal};
-use crate::fsm::DomainAction;
 use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
-use crate::twin_runtime::controller::actuation_manager::{ActuationManager, DefaultActuationManager};
+use crate::twin_runtime::controller::actuation_manager::{
+    ActuationManager, DefaultActuationManager,
+};
 use crate::twin_runtime::outcome_map::zone_outcomes_to_domain_actions;
 use crate::twin_runtime::zone_turn::ZoneOutcome;
 use crate::vehicle_state::WiperOutcome;
+use crate::vehicle_state::{VehicleContext, WiperState};
+use crate::{TwinIngressEvent, VssSignal};
 
 // ── Step 2: DomainAction variants ─────────────────────────────────────────────
 
@@ -97,15 +99,14 @@ fn given_wiper_actuation_commands_when_compared_then_distinct() {
 // ── Step 9: end-to-end physical rain ingress ──────────────────────────────────
 
 #[tokio::test]
-async fn given_idle_wiper_ready_when_rain_detected_true_ingress_then_running_and_start_wiper_command() {
+async fn given_idle_wiper_ready_when_rain_detected_true_ingress_then_running_and_start_wiper_command()
+ {
     let (controller, mut actuation_rx, _guard) = install_with_actuation("WIPER-E2E-1", 8).await;
     power_on_to_idle(&controller).await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(
-            VssSignal::RainDetected(true),
-        ))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::RainDetected(true)))
         .await
         .expect("rain ingress");
 
@@ -122,18 +123,14 @@ async fn given_wiper_running_when_rain_detected_false_ingress_then_ready_and_sto
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(
-            VssSignal::RainDetected(true),
-        ))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::RainDetected(true)))
         .await
         .expect("start rain");
     let _ = expect_actuation_command(&mut actuation_rx, Duration::from_secs(1)).await;
     wait_wiper_state(&controller, WiperState::Running, Duration::from_millis(500)).await;
 
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(
-            VssSignal::RainDetected(false),
-        ))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::RainDetected(false)))
         .await
         .expect("stop rain");
 

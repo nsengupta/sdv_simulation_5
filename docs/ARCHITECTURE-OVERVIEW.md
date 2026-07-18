@@ -10,6 +10,11 @@ Related:
 - [`PHASES.md`](PHASES.md) — phased checklist with acceptance criteria
 - [`TODO-twin-lifecycle.md`](TODO-twin-lifecycle.md) — TL-0–TL-5 done; TL-6+ mapped to phases
 - [`TODO-simulation-5.md`](TODO-simulation-5.md) — carry-forward simulation items
+- [`design-notes-pyramid-layers.md`](design-notes-pyramid-layers.md) — canonical L0–L6 dependency rules
+- [Phase 3 observation-capture design](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md)
+  — storage format and capture ownership
+- [Numeric Unix timestamps design](superpowers/specs/2026-07-18-numeric-unix-timestamps-design.md)
+  — live `UnixTimestamp` and schema-v1 `{unix_seconds,nanosecond}` objects
 
 ---
 
@@ -105,7 +110,7 @@ lifecycle-passive.
 | Dashboard ↔ Twin | Tokio MPSC channels in one `main()` | Observation over file/IPC → later Zenoh |
 | Lifecycle | Finite emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
 | Emulator | Separate finite binary; required `--readings N`; lifecycle plus bounded-random telemetry | CSV/echo and embedded-driver options are deferred |
-| Observation capture | None | Phase 3 library + files |
+| Observation capture | Phase 3 `observation` L6 adapter; Dashboard owns capture while the twin remains in-process | Versioned `manifest.json` plus `diagnostic.jsonl` and `ledger.jsonl`; Gateway assumes ownership in Phase 5 |
 | Replay | None | Phase 6 |
 
 **Naming:** keep crate **`tui_dashboard`** for now. **`simulator`** is reserved for a possible future umbrella binary name.
@@ -121,7 +126,7 @@ lifecycle-passive.
 | G3 | **Closed:** finite emulator sends full lifecycle and telemetry on CAN | **2** |
 | G4 | CSV/echo scenario support is explicitly deferred | Future reconsideration |
 | G5 | Twin co-located with dashboard | **5** |
-| G6 | No human-readable observation files | **3** |
+| G6 | **Closed:** versioned, human-readable observation artifacts written by the L6 `observation` adapter | **3** |
 | G7 | No E2E golden regression on observation artifacts | **4** |
 | G8 | Dashboard cannot drive embedded emulator from TUI | **6** |
 | G9 | No standalone replay mode | **7** |
@@ -147,6 +152,21 @@ guards reject it, the observer-only Dashboard displays the twin's actual unchang
 rejection evidence. The existing twin startup barrier, verified by contract test, orders immediate
 post-PowerOn readings behind assembly startup.
 
+### 4.1 Observation capture (Phase 3)
+
+The `observation` crate is an L6 persistence adapter. It depends downward only on
+`common::facade`, which exposes the live diagnostic and transition-record types; `common` never
+depends on `observation`. The detailed pyramid boundary is documented in
+[`design-notes-pyramid-layers.md`](design-notes-pyramid-layers.md).
+
+During the transitional combined application, `tui_dashboard` is both the live-stream receiver
+and capture owner. It writes every consumed diagnostic and ledger record before retaining that
+record as the UI's latest state. Each run has a versioned `manifest.json` and separate
+`diagnostic.jsonl` and `ledger.jsonl` streams beneath a UUID run directory. This ownership moves
+to Gateway with the Phase 5 process split without changing the file contract. See the
+[Phase 3 design specification](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md)
+for schema, reader, and durability details.
+
 ---
 
 ## 5. Decisions recorded
@@ -164,6 +184,8 @@ post-PowerOn readings behind assembly startup.
 | 2026-07-16 | `VirtualCarActor` silently drops every non-PowerOn FSM event while `Off`. |
 | 2026-07-16 | Phase 2 uses a required finite `--readings N`; CSV/echo is deferred. |
 | 2026-07-16 | Dashboard lifecycle keys were removed; it observes twin-authored outcomes only. |
+| 2026-07-17 | Phase 3 stores a separate `manifest.json`, `diagnostic.jsonl`, and `ledger.jsonl`; production run IDs are UUID v4 while tests inject deterministic IDs; transitional Dashboard capture ownership moves to Gateway in Phase 5. |
+| 2026-07-18 | Twin-authored wall times use a live `UnixTimestamp` (`Duration` since Unix Epoch). Schema v1 stores `{unix_seconds,nanosecond}` objects; summary/UI presentation is `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`. Manifest keeps capture `created_at` and Twin `session_started_at`; Dashboard requires the boot diagnostic before creating a run. |
 
 ---
 
@@ -179,7 +201,9 @@ post-PowerOn readings behind assembly startup.
 | Silent ignore enforcement (Phase 1) | `crates/common/src/twin_runtime/controller/virtual_car_actor.rs` |
 | Finite emulator composition | `crates/emulator/src/main.rs`, `crates/emulator/src/runner.rs` |
 | Headlamp / wiper actuators | `crates/front_headlamp_actuator/`, `crates/wiper_actuator/` |
+| Observation schema, reader, and writer | `crates/observation/` |
+| Dashboard capture composition | `crates/tui_dashboard/src/main.rs` |
 
 ---
 
-*Last updated: 2026-07-16 — finite Phase 2 emulator and observer-only Dashboard.*
+*Last updated: 2026-07-18 — numeric Unix timestamps in live records and schema v1.*

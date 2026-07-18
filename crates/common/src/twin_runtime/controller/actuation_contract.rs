@@ -32,8 +32,12 @@ pub struct CorrelationId {
 /// Wiper variants carry no correlation id — the wiper has no ACK protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActuationCommand {
-    SwitchFrontHeadlampOn { correlation_id: CorrelationId },
-    SwitchFrontHeadlampOff { correlation_id: CorrelationId },
+    SwitchFrontHeadlampOn {
+        correlation_id: CorrelationId,
+    },
+    SwitchFrontHeadlampOff {
+        correlation_id: CorrelationId,
+    },
     /// Tell the wiper actuator to start wiping.
     StartWiper,
     /// Tell the wiper actuator to stop wiping.

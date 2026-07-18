@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use crate::fsm::{step, transition, DomainAction, FsmEvent, FsmState, AssemblyId};
+use crate::fsm::{AssemblyId, DomainAction, FsmEvent, FsmState, step, transition};
 use crate::twin_runtime::zone_turn::zone_message_for_event;
 use crate::vehicle_state::{HeadlampMessage, VehicleContext};
 
@@ -94,7 +94,10 @@ fn test_start_assemblies_action_emitted_on_power_on() {
     let result = step(&FsmState::Off, &ctx(), &FsmEvent::PowerOn, Instant::now());
     assert!(matches!(result.next_state, FsmState::PreparingToStart(_)));
     assert!(
-        result.actions.iter().any(|a| matches!(a, DomainAction::StartAssemblies(_))),
+        result
+            .actions
+            .iter()
+            .any(|a| matches!(a, DomainAction::StartAssemblies(_))),
         "StartAssemblies must be in the action feed; got: {:?}",
         result.actions
     );
@@ -105,7 +108,10 @@ fn test_stop_assemblies_action_emitted_on_power_off_from_idle() {
     let result = step(&FsmState::Idle, &ctx(), &FsmEvent::PowerOff, Instant::now());
     assert!(matches!(result.next_state, FsmState::PreparingToStop(_)));
     assert!(
-        result.actions.iter().any(|a| matches!(a, DomainAction::StopAssemblies(_))),
+        result
+            .actions
+            .iter()
+            .any(|a| matches!(a, DomainAction::StopAssemblies(_))),
         "StopAssemblies must be in the action feed; got: {:?}",
         result.actions
     );
@@ -150,7 +156,12 @@ fn test_zone_message_for_event_returns_some_during_idle() {
 
 #[test]
 fn given_rains_started_in_idle_when_stepped_then_self_loop_with_no_fsm_actions() {
-    let result = step(&FsmState::Idle, &ctx(), &FsmEvent::RainsStarted, Instant::now());
+    let result = step(
+        &FsmState::Idle,
+        &ctx(),
+        &FsmEvent::RainsStarted,
+        Instant::now(),
+    );
     assert_eq!(
         result.next_state,
         FsmState::Idle,
@@ -204,8 +215,14 @@ fn test_preparing_to_start_carries_assembly_ids() {
     let FsmState::PreparingToStart(remaining) = &result.next_state else {
         panic!("expected PreparingToStart, got {:?}", result.next_state);
     };
-    assert!(remaining.contains(&AssemblyId::Headlamp), "Headlamp must be in the remaining set");
-    assert!(remaining.contains(&AssemblyId::Wiper), "Wiper must be in the remaining set");
+    assert!(
+        remaining.contains(&AssemblyId::Headlamp),
+        "Headlamp must be in the remaining set"
+    );
+    assert!(
+        remaining.contains(&AssemblyId::Wiper),
+        "Wiper must be in the remaining set"
+    );
 }
 
 #[test]
@@ -229,10 +246,19 @@ fn test_state_and_action_agree_on_assembly_set() {
     let action_list = result
         .actions
         .iter()
-        .find_map(|a| if let DomainAction::StartAssemblies(list) = a { Some(list.clone()) } else { None })
+        .find_map(|a| {
+            if let DomainAction::StartAssemblies(list) = a {
+                Some(list.clone())
+            } else {
+                None
+            }
+        })
         .expect("StartAssemblies action must be present after PowerOn");
     let action_set: BTreeSet<AssemblyId> = action_list.into_iter().collect();
-    assert_eq!(state_set, &action_set, "state set and action payload must agree");
+    assert_eq!(
+        state_set, &action_set,
+        "state set and action payload must agree"
+    );
 }
 
 #[test]
@@ -244,7 +270,11 @@ fn test_assembly_zone_ready_shrinks_state_not_context() {
     let FsmState::PreparingToStart(after_power_on) = &power_on.next_state else {
         panic!("expected PreparingToStart after PowerOn");
     };
-    assert_eq!(after_power_on.len(), 2, "two assemblies pending after PowerOn");
+    assert_eq!(
+        after_power_on.len(),
+        2,
+        "two assemblies pending after PowerOn"
+    );
 
     let headlamp_ready = step(
         &power_on.next_state,
@@ -268,7 +298,13 @@ fn test_start_assemblies_action_carries_assembly_list() {
     let list = result
         .actions
         .iter()
-        .find_map(|a| if let DomainAction::StartAssemblies(list) = a { Some(list.clone()) } else { None })
+        .find_map(|a| {
+            if let DomainAction::StartAssemblies(list) = a {
+                Some(list.clone())
+            } else {
+                None
+            }
+        })
         .expect("StartAssemblies must be in actions after PowerOn");
     assert!(list.contains(&AssemblyId::Headlamp));
     assert!(list.contains(&AssemblyId::Wiper));

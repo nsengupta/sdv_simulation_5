@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // These are your "DBC" constants.
 // They are "User-Defined" for your specific vehicle platform.
 pub const ID_SPEED: u32 = 0x123;
-pub const ID_RPM:   u32 = 0x124;
+pub const ID_RPM: u32 = 0x124;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

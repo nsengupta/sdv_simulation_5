@@ -30,8 +30,16 @@ fn given_rain_detected_when_encoded_then_can_id_distinct_from_rpm_and_lux() {
     let rpm_frame = VssSignal::EngineRpm(1000)
         .to_can_frame()
         .expect("encode rpm");
-    assert_ne!(rain_frame.id(), lux_frame.id(), "rain vs lux CAN ID collision");
-    assert_ne!(rain_frame.id(), rpm_frame.id(), "rain vs rpm CAN ID collision");
+    assert_ne!(
+        rain_frame.id(),
+        lux_frame.id(),
+        "rain vs lux CAN ID collision"
+    );
+    assert_ne!(
+        rain_frame.id(),
+        rpm_frame.id(),
+        "rain vs rpm CAN ID collision"
+    );
 }
 
 #[test]

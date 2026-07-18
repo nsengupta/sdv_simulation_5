@@ -1,15 +1,13 @@
 //! Contract tests for projection from canonical twin ingress into the FSM mailbox.
 
 use crate::digital_twin::TwinMessage;
-use crate::twin_runtime::connectors::{IngressToFsmProjector, ProjectionError, Projector};
 use crate::fsm::FsmEvent;
+use crate::twin_runtime::connectors::{IngressToFsmProjector, ProjectionError, Projector};
 use crate::{LifecycleCommand, TwinIngressEvent, VssSignal};
 
 #[test]
 fn canonical_twin_ingress_names_are_public_and_projectable() {
-    use crate::{
-        IngressToFsmProjector, LifecycleCommand, TwinIngressEvent, TwinMessage,
-    };
+    use crate::{IngressToFsmProjector, LifecycleCommand, TwinIngressEvent, TwinMessage};
 
     let projector = IngressToFsmProjector;
     let output = projector
@@ -155,12 +153,15 @@ fn given_front_headlamp_rejected_when_projected_then_maps_to_incomplete_with_neg
         .project(TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true })
         .expect("reject projection must succeed");
     match out {
-        TwinMessage::Fsm(FsmEvent::FrontHeadlampActuationIncomplete {
-            direction,
-            cause,
-        }) => {
-            assert!(matches!(direction, crate::fsm::FrontHeadlampSwitchDirection::On));
-            assert!(matches!(cause, crate::fsm::FrontHeadlampIncompleteCause::NegativeAck));
+        TwinMessage::Fsm(FsmEvent::FrontHeadlampActuationIncomplete { direction, cause }) => {
+            assert!(matches!(
+                direction,
+                crate::fsm::FrontHeadlampSwitchDirection::On
+            ));
+            assert!(matches!(
+                cause,
+                crate::fsm::FrontHeadlampIncompleteCause::NegativeAck
+            ));
         }
         other => panic!("unexpected rejected mapping: {other:?}"),
     }

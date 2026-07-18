@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::digital_twin::DigitalTwinCar;
-use crate::twin_runtime::controller::{ActuationCommand, CorrelationId};
 use crate::fsm::DomainAction;
+use crate::twin_runtime::controller::{ActuationCommand, CorrelationId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActuationError {

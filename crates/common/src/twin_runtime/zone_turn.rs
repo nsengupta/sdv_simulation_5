@@ -6,9 +6,8 @@ use crate::digital_twin::{ZoneMessage, ZoneReply};
 use crate::fsm::{AssemblyId, FsmEvent, FsmState};
 use crate::twin_runtime::zone_replies::ZoneReplies;
 use crate::vehicle_state::{
-    HeadlampMessage, HeadlampOutcome, HeadlampZoneReply,
-    WiperMessage, WiperOutcome, WiperZoneReply,
-    VehicleContext,
+    HeadlampMessage, HeadlampOutcome, HeadlampZoneReply, VehicleContext, WiperMessage,
+    WiperOutcome, WiperZoneReply,
 };
 
 /// Tagged zone egress for one `zone_turn` call — replaces the per-zone
@@ -74,14 +73,10 @@ fn user_event_to_zone_tell(event: &FsmEvent) -> Option<(AssemblyId, ZoneMessage)
                 cause: *cause,
             }),
         )),
-        FsmEvent::RainsStarted => Some((
-            AssemblyId::Wiper,
-            ZoneMessage::Wiper(WiperMessage::Start),
-        )),
-        FsmEvent::RainsStopped => Some((
-            AssemblyId::Wiper,
-            ZoneMessage::Wiper(WiperMessage::Stop),
-        )),
+        FsmEvent::RainsStarted => {
+            Some((AssemblyId::Wiper, ZoneMessage::Wiper(WiperMessage::Start)))
+        }
+        FsmEvent::RainsStopped => Some((AssemblyId::Wiper, ZoneMessage::Wiper(WiperMessage::Stop))),
         FsmEvent::UpdateRpm(_)
         | FsmEvent::PowerOn
         | FsmEvent::PowerOff
@@ -97,7 +92,9 @@ fn merge_headlamp_for_message(
     now: Instant,
     tell_back: Option<&HeadlampZoneReply>,
 ) -> HeadlampZoneReply {
-    tell_back.cloned().unwrap_or_else(|| ctx.headlamp.on_receiving_message(message, now))
+    tell_back
+        .cloned()
+        .unwrap_or_else(|| ctx.headlamp.on_receiving_message(message, now))
 }
 
 fn merge_wiper_for_message(
@@ -105,7 +102,9 @@ fn merge_wiper_for_message(
     message: WiperMessage,
     tell_back: Option<&WiperZoneReply>,
 ) -> WiperZoneReply {
-    tell_back.cloned().unwrap_or_else(|| ctx.wiper.on_receiving_message(message))
+    tell_back
+        .cloned()
+        .unwrap_or_else(|| ctx.wiper.on_receiving_message(message))
 }
 
 /// Apply ingress to L1 zones. Does not run the operational FSM (L2).
@@ -119,8 +118,12 @@ pub fn zone_turn(
     let mut next = ctx.clone();
     let mut outcomes: Vec<ZoneOutcome> = Vec::new();
 
-    let headlamp_ingress = zone_replies.get(&AssemblyId::Headlamp).and_then(ZoneReply::as_headlamp);
-    let wiper_ingress = zone_replies.get(&AssemblyId::Wiper).and_then(ZoneReply::as_wiper);
+    let headlamp_ingress = zone_replies
+        .get(&AssemblyId::Headlamp)
+        .and_then(ZoneReply::as_headlamp);
+    let wiper_ingress = zone_replies
+        .get(&AssemblyId::Wiper)
+        .and_then(ZoneReply::as_wiper);
 
     match event {
         FsmEvent::UpdateRpm(rpm) => {
@@ -183,23 +186,24 @@ pub fn zone_turn(
             outcomes.extend(zone_reply.outcomes.into_iter().map(ZoneOutcome::Wiper));
         }
         FsmEvent::PowerOn | FsmEvent::PowerOff | FsmEvent::Internal(_) => {}
-        FsmEvent::AssemblyZoneReady(assembly_id) => {
-            match assembly_id {
-                AssemblyId::Headlamp => {
-                    if let Some(reply) = headlamp_ingress {
-                        next.headlamp = reply.ctx.clone();
-                        outcomes.extend(reply.outcomes.iter().cloned().map(ZoneOutcome::Headlamp));
-                    }
-                }
-                AssemblyId::Wiper => {
-                    if let Some(reply) = wiper_ingress {
-                        next.wiper = reply.ctx.clone();
-                        outcomes.extend(reply.outcomes.iter().cloned().map(ZoneOutcome::Wiper));
-                    }
+        FsmEvent::AssemblyZoneReady(assembly_id) => match assembly_id {
+            AssemblyId::Headlamp => {
+                if let Some(reply) = headlamp_ingress {
+                    next.headlamp = reply.ctx.clone();
+                    outcomes.extend(reply.outcomes.iter().cloned().map(ZoneOutcome::Headlamp));
                 }
             }
-        }
+            AssemblyId::Wiper => {
+                if let Some(reply) = wiper_ingress {
+                    next.wiper = reply.ctx.clone();
+                    outcomes.extend(reply.outcomes.iter().cloned().map(ZoneOutcome::Wiper));
+                }
+            }
+        },
     }
 
-    ZoneTurnResult { ctx: next, outcomes }
+    ZoneTurnResult {
+        ctx: next,
+        outcomes,
+    }
 }

@@ -1,0 +1,608 @@
+//! Schema version 1: validated identifiers, timestamps, manifest, stream envelopes, and the
+//! explicit archival DTOs projected from live `common::facade` records.
+//!
+//! Every DTO here is a deliberate mirror of a live record, never a direct serialization of it
+//! (see `docs/superpowers/specs/2026-07-17-phase-3-observation-capture-design.md`). Projection
+//! functions map every live enum variant explicitly; there are no wildcard arms, so a future
+//! live variant fails to compile here rather than being silently dropped or misfiled.
+
+use std::fmt;
+use std::time::Duration;
+
+use serde::{Deserialize, Deserializer, Serialize};
+use time::{OffsetDateTime, UtcOffset};
+use uuid::Uuid;
+
+use common::facade::{
+    DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
+    PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
+    PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
+    PublishedHealthContext, PublishedOperational, PublishedPowertrainContext,
+    PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext, UnixTimestamp,
+};
+
+use crate::ObservationError;
+use crate::schema::CURRENT_SCHEMA_VERSION;
+
+const TIMESTAMP_DISPLAY_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] =
+    time::macros::format_description!(
+        "[year]-[month]-[day] | [hour]:[minute]:[second]:[subsecond digits:9] (UTC)"
+    );
+
+const MAX_NANOSECOND: u32 = 999_999_999;
+
+/// A validated run identifier — a UUID, canonically v4 in production runs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RunId(Uuid);
+
+impl RunId {
+    pub fn new_v4() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn parse(value: &str) -> Result<Self, uuid::Error> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
+impl std::fmt::Display for RunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Portable schema-v1 wall-clock stamp: whole Unix seconds plus subsecond nanoseconds.
+///
+/// This is the archival form of [`UnixTimestamp`]. `unix_seconds` is never milliseconds.
+/// `nanosecond` is always `0..=999_999_999`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct UnixTimestampV1 {
+    pub unix_seconds: u64,
+    pub nanosecond: u32,
+}
+
+impl UnixTimestampV1 {
+    pub fn new(unix_seconds: u64, nanosecond: u32) -> Result<Self, ObservationError> {
+        if nanosecond > MAX_NANOSECOND {
+            return Err(ObservationError::InvalidTimestamp {
+                value: format!("{{unix_seconds:{unix_seconds},nanosecond:{nanosecond}}}"),
+                reason: format!("nanosecond must be <= {MAX_NANOSECOND}"),
+            });
+        }
+        Ok(Self {
+            unix_seconds,
+            nanosecond,
+        })
+    }
+
+    pub fn from_live(value: UnixTimestamp) -> Self {
+        Self {
+            unix_seconds: value.unix_seconds(),
+            nanosecond: value.nanosecond(),
+        }
+    }
+
+    pub fn to_live(self) -> UnixTimestamp {
+        UnixTimestamp::from_duration_since_epoch(Duration::new(self.unix_seconds, self.nanosecond))
+    }
+
+    pub fn from_duration_since_epoch(value: Duration) -> Self {
+        Self::from_live(UnixTimestamp::from_duration_since_epoch(value))
+    }
+
+    /// Presentation-only UTC wall time: `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`.
+    pub fn to_display_utc(self) -> Result<String, ObservationError> {
+        let nanos = i128::from(self.unix_seconds) * 1_000_000_000 + i128::from(self.nanosecond);
+        let parsed = OffsetDateTime::from_unix_timestamp_nanos(nanos).map_err(|source| {
+            ObservationError::InvalidTimestamp {
+                value: format!(
+                    "{{unix_seconds:{},nanosecond:{}}}",
+                    self.unix_seconds, self.nanosecond
+                ),
+                reason: source.to_string(),
+            }
+        })?;
+        parsed
+            .to_offset(UtcOffset::UTC)
+            .format(TIMESTAMP_DISPLAY_FORMAT)
+            .map_err(|source| ObservationError::InvalidTimestamp {
+                value: format!(
+                    "{{unix_seconds:{},nanosecond:{}}}",
+                    self.unix_seconds, self.nanosecond
+                ),
+                reason: source.to_string(),
+            })
+    }
+}
+
+impl fmt::Display for UnixTimestampV1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.to_display_utc() {
+            Ok(text) => f.write_str(&text),
+            Err(_) => write!(
+                f,
+                "{{unix_seconds:{},nanosecond:{}}}",
+                self.unix_seconds, self.nanosecond
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for UnixTimestampV1 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            unix_seconds: u64,
+            nanosecond: u32,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        UnixTimestampV1::new(raw.unix_seconds, raw.nanosecond).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Compatibility alias used by older call sites; schema storage is [`UnixTimestampV1`].
+pub type Timestamp = UnixTimestampV1;
+
+/// Run-level metadata common to the manifest and every stream envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunMetadata {
+    pub run_id: RunId,
+    pub created_at: UnixTimestampV1,
+    pub session_started_at: UnixTimestampV1,
+    pub vehicle_identity: String,
+    pub scenario: Option<ScenarioMetadata>,
+}
+
+impl RunMetadata {
+    pub fn new(
+        run_id: RunId,
+        created_at: UnixTimestampV1,
+        session_started_at: UnixTimestampV1,
+        vehicle_identity: impl Into<String>,
+        scenario: Option<ScenarioMetadata>,
+    ) -> Self {
+        Self {
+            run_id,
+            created_at,
+            session_started_at,
+            vehicle_identity: vehicle_identity.into(),
+            scenario,
+        }
+    }
+
+    pub fn now(
+        run_id: RunId,
+        session_started_at: UnixTimestampV1,
+        vehicle_identity: impl Into<String>,
+        scenario: Option<ScenarioMetadata>,
+    ) -> Result<Self, ObservationError> {
+        let now = OffsetDateTime::now_utc();
+        let unix_seconds = u64::try_from(now.unix_timestamp()).map_err(|source| {
+            ObservationError::InvalidTimestamp {
+                value: "now".into(),
+                reason: source.to_string(),
+            }
+        })?;
+        let created_at = UnixTimestampV1::new(unix_seconds, now.nanosecond())?;
+        Ok(Self::new(
+            run_id,
+            created_at,
+            session_started_at,
+            vehicle_identity,
+            scenario,
+        ))
+    }
+}
+
+/// Optional, deliberately narrow scenario provenance. Phase 3 live capture always writes `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScenarioMetadata {
+    pub name: String,
+    pub source: Option<String>,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestV1 {
+    pub schema_version: u32,
+    pub run_id: RunId,
+    pub created_at: UnixTimestampV1,
+    pub session_started_at: UnixTimestampV1,
+    pub vehicle: VehicleV1,
+    pub scenario: Option<ScenarioMetadata>,
+    pub streams: StreamsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VehicleV1 {
+    pub identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamsV1 {
+    pub diagnostic: String,
+    pub ledger: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamEnvelopeV1<T> {
+    pub schema_version: u32,
+    pub run_id: RunId,
+    pub vehicle_identity: String,
+    pub recorded_at: UnixTimestampV1,
+    pub payload: T,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FsmEventV1 {
+    PowerOn,
+    PowerOff,
+    UpdateRpm {
+        rpm: u16,
+    },
+    UpdateAmbientLux {
+        lux: u16,
+    },
+    FrontHeadlampOnAck,
+    FrontHeadlampOffAck,
+    FrontHeadlampActuationIncomplete {
+        direction: FrontHeadlampSwitchDirectionV1,
+        cause: FrontHeadlampIncompleteCauseV1,
+    },
+    TimerTick,
+    Internal {
+        operational: OperationalV1,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FsmStateV1 {
+    Off,
+    PreparingToStart,
+    Idle,
+    Driving,
+    DrivingDangerously,
+    ExtremeOperationWarning { entered_at: UnixTimestampV1 },
+    PreparingToStop,
+}
+
+impl FsmStateV1 {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::PreparingToStart => "PreparingToStart",
+            Self::Idle => "Idle",
+            Self::Driving => "Driving",
+            Self::DrivingDangerously => "DrivingDangerously",
+            Self::ExtremeOperationWarning { .. } => "ExtremeOperationWarning",
+            Self::PreparingToStop => "PreparingToStop",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DomainActionV1 {
+    StartBuzzer,
+    StopBuzzer,
+    PublishStateSync,
+    LogWarning { message: String },
+    RequestFrontHeadlampOn,
+    RequestFrontHeadlampOff,
+    RequestWiperStart,
+    RequestWiperStop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticLevelV1 {
+    Info,
+    Action,
+    Alert,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticPayloadV1 {
+    pub level: DiagnosticLevelV1,
+    pub source: String,
+    pub message: String,
+    pub session_started_at: UnixTimestampV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerPayloadV1 {
+    pub session_started_at: UnixTimestampV1,
+    pub record_seq: u64,
+    pub event: FsmEventV1,
+    pub old_state: FsmStateV1,
+    pub next_state: FsmStateV1,
+    pub old_ctx: VehicleContextV1,
+    pub current_ctx: VehicleContextV1,
+    pub actions: Vec<DomainActionV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WheelRpmV1 {
+    pub front_left: u16,
+    pub front_right: u16,
+    pub rear_left: u16,
+    pub rear_right: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PowertrainContextV1 {
+    pub wheel_rpm: WheelRpmV1,
+    pub speed_kph: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthContextV1 {
+    pub fuel_level_pct: u8,
+    pub oil_pressure_kpa: u8,
+    pub tyre_pressure_ok: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisibilityContextV1 {
+    pub ambient_lux: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlampStateV1 {
+    Off,
+    Ready,
+    OnRequested,
+    On,
+    OffRequested,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadlampContextV1 {
+    pub state: HeadlampStateV1,
+    pub ack_pending_since: Option<UnixTimestampV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VehicleContextV1 {
+    pub powertrain: PowertrainContextV1,
+    pub health: HealthContextV1,
+    pub visibility: VisibilityContextV1,
+    pub headlamp: HeadlampContextV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrontHeadlampSwitchDirectionV1 {
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrontHeadlampIncompleteCauseV1 {
+    TimedOut,
+    NegativeAck,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationalV1 {
+    LightingUnsafe,
+}
+
+/// Project a live diagnostic record into its archival DTO envelope.
+pub fn diagnostic_envelope(
+    metadata: &RunMetadata,
+    record: &DiagnosticRecord,
+) -> Result<StreamEnvelopeV1<DiagnosticPayloadV1>, ObservationError> {
+    let session_started_at = UnixTimestampV1::from_live(record.session_started_at);
+    if session_started_at != metadata.session_started_at {
+        return Err(ObservationError::SessionMismatch {
+            expected: metadata.session_started_at.to_string(),
+            found: session_started_at.to_string(),
+        });
+    }
+    let payload = DiagnosticPayloadV1 {
+        level: project_diagnostic_level(record.level),
+        source: record.source.to_string(),
+        message: record.message.clone(),
+        session_started_at,
+    };
+    Ok(StreamEnvelopeV1 {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        run_id: metadata.run_id.clone(),
+        vehicle_identity: metadata.vehicle_identity.clone(),
+        recorded_at: UnixTimestampV1::from_live(record.recorded_at),
+        payload,
+    })
+}
+
+/// Project a live transition-ledger record into its archival DTO envelope.
+///
+/// Fails with [`ObservationError::VehicleMismatch`] if the record's vehicle identity does not
+/// match the run's declared vehicle.
+pub fn ledger_envelope(
+    metadata: &RunMetadata,
+    record: &PublishedTransitionRecord,
+) -> Result<StreamEnvelopeV1<LedgerPayloadV1>, ObservationError> {
+    if record.car_identity != metadata.vehicle_identity {
+        return Err(ObservationError::VehicleMismatch {
+            expected: metadata.vehicle_identity.clone(),
+            found: record.car_identity.clone(),
+        });
+    }
+    let session_started_at = UnixTimestampV1::from_live(record.session_started_at);
+    if session_started_at != metadata.session_started_at {
+        return Err(ObservationError::SessionMismatch {
+            expected: metadata.session_started_at.to_string(),
+            found: session_started_at.to_string(),
+        });
+    }
+
+    let payload = LedgerPayloadV1 {
+        session_started_at,
+        record_seq: record.record_seq,
+        event: project_fsm_event(&record.event),
+        old_state: project_fsm_state(&record.old_state),
+        next_state: project_fsm_state(&record.next_state),
+        old_ctx: project_vehicle_context(&record.old_ctx),
+        current_ctx: project_vehicle_context(&record.current_ctx),
+        actions: record.actions.iter().map(project_domain_action).collect(),
+    };
+    Ok(StreamEnvelopeV1 {
+        schema_version: CURRENT_SCHEMA_VERSION,
+        run_id: metadata.run_id.clone(),
+        vehicle_identity: metadata.vehicle_identity.clone(),
+        recorded_at: UnixTimestampV1::from_live(record.recorded_at),
+        payload,
+    })
+}
+
+fn project_diagnostic_level(level: DiagnosticLevel) -> DiagnosticLevelV1 {
+    match level {
+        DiagnosticLevel::Info => DiagnosticLevelV1::Info,
+        DiagnosticLevel::Action => DiagnosticLevelV1::Action,
+        DiagnosticLevel::Alert => DiagnosticLevelV1::Alert,
+        DiagnosticLevel::Warning => DiagnosticLevelV1::Warning,
+        DiagnosticLevel::Error => DiagnosticLevelV1::Error,
+    }
+}
+
+fn project_fsm_event(event: &PublishedFsmEvent) -> FsmEventV1 {
+    match event {
+        PublishedFsmEvent::PowerOn => FsmEventV1::PowerOn,
+        PublishedFsmEvent::PowerOff => FsmEventV1::PowerOff,
+        PublishedFsmEvent::UpdateRpm(rpm) => FsmEventV1::UpdateRpm { rpm: *rpm },
+        PublishedFsmEvent::UpdateAmbientLux(lux) => FsmEventV1::UpdateAmbientLux { lux: *lux },
+        PublishedFsmEvent::FrontHeadlampOnAck => FsmEventV1::FrontHeadlampOnAck,
+        PublishedFsmEvent::FrontHeadlampOffAck => FsmEventV1::FrontHeadlampOffAck,
+        PublishedFsmEvent::FrontHeadlampActuationIncomplete { direction, cause } => {
+            FsmEventV1::FrontHeadlampActuationIncomplete {
+                direction: project_switch_direction(direction),
+                cause: project_incomplete_cause(cause),
+            }
+        }
+        PublishedFsmEvent::TimerTick => FsmEventV1::TimerTick,
+        PublishedFsmEvent::Internal(operational) => FsmEventV1::Internal {
+            operational: project_operational(operational),
+        },
+    }
+}
+
+fn project_fsm_state(state: &PublishedFsmState) -> FsmStateV1 {
+    match state {
+        PublishedFsmState::Off => FsmStateV1::Off,
+        PublishedFsmState::PreparingToStart => FsmStateV1::PreparingToStart,
+        PublishedFsmState::Idle => FsmStateV1::Idle,
+        PublishedFsmState::Driving => FsmStateV1::Driving,
+        PublishedFsmState::DrivingDangerously => FsmStateV1::DrivingDangerously,
+        PublishedFsmState::ExtremeOperationWarning { entered_at } => {
+            FsmStateV1::ExtremeOperationWarning {
+                entered_at: UnixTimestampV1::from_live(*entered_at),
+            }
+        }
+        PublishedFsmState::PreparingToStop => FsmStateV1::PreparingToStop,
+    }
+}
+
+fn project_domain_action(action: &PublishedDomainAction) -> DomainActionV1 {
+    match action {
+        PublishedDomainAction::StartBuzzer => DomainActionV1::StartBuzzer,
+        PublishedDomainAction::StopBuzzer => DomainActionV1::StopBuzzer,
+        PublishedDomainAction::PublishStateSync => DomainActionV1::PublishStateSync,
+        PublishedDomainAction::LogWarning(message) => DomainActionV1::LogWarning {
+            message: message.clone(),
+        },
+        PublishedDomainAction::RequestFrontHeadlampOn => DomainActionV1::RequestFrontHeadlampOn,
+        PublishedDomainAction::RequestFrontHeadlampOff => DomainActionV1::RequestFrontHeadlampOff,
+        PublishedDomainAction::RequestWiperStart => DomainActionV1::RequestWiperStart,
+        PublishedDomainAction::RequestWiperStop => DomainActionV1::RequestWiperStop,
+    }
+}
+
+fn project_vehicle_context(ctx: &PublishedVehicleContext) -> VehicleContextV1 {
+    VehicleContextV1 {
+        powertrain: project_powertrain_context(&ctx.powertrain),
+        health: project_health_context(&ctx.health),
+        visibility: project_visibility_context(&ctx.visibility),
+        headlamp: project_headlamp_context(&ctx.headlamp),
+    }
+}
+
+fn project_powertrain_context(ctx: &PublishedPowertrainContext) -> PowertrainContextV1 {
+    PowertrainContextV1 {
+        wheel_rpm: WheelRpmV1 {
+            front_left: ctx.wheel_rpm.front_left,
+            front_right: ctx.wheel_rpm.front_right,
+            rear_left: ctx.wheel_rpm.rear_left,
+            rear_right: ctx.wheel_rpm.rear_right,
+        },
+        speed_kph: ctx.speed_kph,
+    }
+}
+
+fn project_health_context(ctx: &PublishedHealthContext) -> HealthContextV1 {
+    HealthContextV1 {
+        fuel_level_pct: ctx.fuel_level_pct,
+        oil_pressure_kpa: ctx.oil_pressure_kpa,
+        tyre_pressure_ok: ctx.tyre_pressure_ok,
+    }
+}
+
+fn project_visibility_context(ctx: &PublishedVisibilityContext) -> VisibilityContextV1 {
+    VisibilityContextV1 {
+        ambient_lux: ctx.ambient_lux,
+    }
+}
+
+fn project_headlamp_context(ctx: &PublishedHeadlampContext) -> HeadlampContextV1 {
+    HeadlampContextV1 {
+        state: project_headlamp_state(&ctx.state),
+        ack_pending_since: ctx.ack_pending_since.map(UnixTimestampV1::from_live),
+    }
+}
+
+fn project_headlamp_state(state: &PublishedHeadlampState) -> HeadlampStateV1 {
+    match state {
+        PublishedHeadlampState::Off => HeadlampStateV1::Off,
+        PublishedHeadlampState::Ready => HeadlampStateV1::Ready,
+        PublishedHeadlampState::OnRequested => HeadlampStateV1::OnRequested,
+        PublishedHeadlampState::On => HeadlampStateV1::On,
+        PublishedHeadlampState::OffRequested => HeadlampStateV1::OffRequested,
+    }
+}
+
+fn project_switch_direction(
+    direction: &PublishedFrontHeadlampSwitchDirection,
+) -> FrontHeadlampSwitchDirectionV1 {
+    match direction {
+        PublishedFrontHeadlampSwitchDirection::On => FrontHeadlampSwitchDirectionV1::On,
+        PublishedFrontHeadlampSwitchDirection::Off => FrontHeadlampSwitchDirectionV1::Off,
+    }
+}
+
+fn project_incomplete_cause(
+    cause: &PublishedFrontHeadlampIncompleteCause,
+) -> FrontHeadlampIncompleteCauseV1 {
+    match cause {
+        PublishedFrontHeadlampIncompleteCause::TimedOut => FrontHeadlampIncompleteCauseV1::TimedOut,
+        PublishedFrontHeadlampIncompleteCause::NegativeAck => {
+            FrontHeadlampIncompleteCauseV1::NegativeAck
+        }
+    }
+}
+
+fn project_operational(operational: &PublishedOperational) -> OperationalV1 {
+    match operational {
+        PublishedOperational::LightingUnsafe => OperationalV1::LightingUnsafe,
+    }
+}

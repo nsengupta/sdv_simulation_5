@@ -3,21 +3,21 @@
 //! The pure FSM core measures time with [`std::time::Instant`] — monotonic, process-local, and
 //! deliberately **not** serializable (it has no defined zero). For anything that leaves the
 //! process — a file, a wire, an offline verifier — every `Instant` is projected to a
-//! [`Duration`] since [`UNIX_EPOCH`], anchored once per session by a [`SessionClock`].
+//! [`UnixTimestamp`] (wall time since [`UNIX_EPOCH`]), anchored once per session by a
+//! [`SessionClock`].
 //!
 //! Design contract (see `docs/design-notes-runtime-observation.md`, item "(1)"):
 //! - **Permanence of `Instant` inside:** [`crate::fsm::FsmState`],
 //!   [`crate::vehicle_state::VehicleContext`], and [`crate::fsm::RawTransitionRecord`] stay `Instant`-bearing
 //!   and serde-free. Nothing here mutates the functional core.
-//! - **Duration for the world:** this module owns the full, lossless mirror of those types with
-//!   each `Instant` replaced by a wall-clock `Duration` since `UNIX_EPOCH`, plus serde for now.
+//! - **UnixTimestamp for the world:** this module owns the full, lossless mirror of those types with
+//!   each `Instant` replaced by a semantic wall-clock stamp since `UNIX_EPOCH`.
 //!
-//! Ordering for offline folding is `record_seq` (clock-independent); `recorded_at_unix`
-//! answers *how long between transitions*; `session_start_unix_nanos` says *which run*.
+//! Ordering for offline folding is `record_seq` (clock-independent); `recorded_at`
+//! answers *how long between transitions*; `session_started_at` says *which run*.
 //!
-//! **Wire format:** serde (JSON, etc.) is implemented here today. When we adopt Protobuf (or
-//! another binary schema), add a dedicated codec module that maps from these types — do not
-//! embed protobuf derives on the record structs themselves.
+//! **Wire format:** archival codecs live in the L6 `observation` crate. These published types are
+//! the live projection surface; do not embed protobuf or JSON schema derives here.
 
 pub mod sink;
 
@@ -25,19 +25,52 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsm::{
-    DomainAction, FsmEvent, FsmState, RawTransitionRecord,
-};
+use crate::fsm::{DomainAction, FsmEvent, FsmState, RawTransitionRecord};
 use crate::vehicle_state::{
     FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection, HeadlampContext, HeadlampState,
     PowertrainContext, VehicleContext, VehicleHealthContext, VisibilityContext, WheelRpm,
 };
 
+/// Wall-clock instant since the Unix Epoch, for Twin-authored observation records.
+///
+/// Backed by [`Duration`] so arithmetic and unit meaning stay type-safe. Storage adapters split
+/// this into whole seconds plus subsecond nanoseconds; callers must not treat the inner value as
+/// a bare integer without a unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UnixTimestamp(Duration);
+
+impl UnixTimestamp {
+    /// Construct from a duration since `UNIX_EPOCH`.
+    pub fn from_duration_since_epoch(value: Duration) -> Self {
+        Self(value)
+    }
+
+    /// Exact duration since `UNIX_EPOCH`.
+    pub fn duration_since_epoch(self) -> Duration {
+        self.0
+    }
+
+    /// Whole seconds since `UNIX_EPOCH` (`Duration::as_secs`).
+    pub fn unix_seconds(self) -> u64 {
+        self.0.as_secs()
+    }
+
+    /// Subsecond nanoseconds (`0..=999_999_999`).
+    pub fn nanosecond(self) -> u32 {
+        self.0.subsec_nanos()
+    }
+
+    /// Saturating elapsed time from an earlier stamp to this one.
+    pub fn saturating_duration_since(self, earlier: Self) -> Duration {
+        self.0.saturating_sub(earlier.0)
+    }
+}
+
 /// Per-session clock: correlates monotonic [`Instant`] with wall time since [`UNIX_EPOCH`].
 ///
 /// Captured once at actor start. This is **not** a timestamp — it is the anchor used to
-/// project monotonic instants into serializable wall-clock [`Duration`]s. The session start
-/// itself is exposed as [`Self::session_start_unix_nanos`].
+/// project monotonic instants into [`UnixTimestamp`] values. The session start itself is
+/// exposed as [`Self::session_started_at`].
 ///
 /// `started_at_instant` is the monotonic anchor; `started_at_unix` is when that anchor sits
 /// on the wall clock. Any later monotonic instant `t` projects to
@@ -59,17 +92,19 @@ impl SessionClock {
         }
     }
 
-    /// Project a monotonic instant to a wall-clock [`Duration`] since `UNIX_EPOCH`.
+    /// Project a monotonic instant to a wall-clock [`UnixTimestamp`] since `UNIX_EPOCH`.
     ///
     /// `saturating_duration_since` guards the (not-expected) case of an instant before the
     /// anchor, yielding the anchor's own wall stamp rather than underflowing.
-    pub fn project(&self, t: &Instant) -> Duration {
-        self.started_at_unix + t.saturating_duration_since(self.started_at_instant)
+    pub fn project(&self, t: &Instant) -> UnixTimestamp {
+        UnixTimestamp::from_duration_since_epoch(
+            self.started_at_unix + t.saturating_duration_since(self.started_at_instant),
+        )
     }
 
-    /// When this session started: nanoseconds since `UNIX_EPOCH`. Stable run identifier.
-    pub fn session_start_unix_nanos(&self) -> u128 {
-        self.started_at_unix.as_nanos()
+    /// When this session started on the wall clock.
+    pub fn session_started_at(&self) -> UnixTimestamp {
+        UnixTimestamp::from_duration_since_epoch(self.started_at_unix)
     }
 }
 
@@ -173,9 +208,9 @@ impl From<&FsmEvent> for PublishedFsmEvent {
             // AssemblyZoneReady, RainsStarted, RainsStopped are internal coordination or
             // zone-only events with no published representation; map to TimerTick as a
             // neutral placeholder — the FSM state change is captured in the ledger state.
-            FsmEvent::AssemblyZoneReady(_)
-            | FsmEvent::RainsStarted
-            | FsmEvent::RainsStopped => Self::TimerTick,
+            FsmEvent::AssemblyZoneReady(_) | FsmEvent::RainsStarted | FsmEvent::RainsStopped => {
+                Self::TimerTick
+            }
         }
     }
 }
@@ -213,7 +248,7 @@ impl PublishedDomainAction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishedFsmState {
     Off,
     PreparingToStart,
@@ -222,7 +257,7 @@ pub enum PublishedFsmState {
     DrivingDangerously,
     /// When the warning state was entered, projected to wall clock.
     ExtremeOperationWarning {
-        entered_at_unix: Duration,
+        entered_at: UnixTimestamp,
     },
     PreparingToStop,
 }
@@ -236,7 +271,7 @@ impl PublishedFsmState {
             FsmState::Driving => Self::Driving,
             FsmState::DrivingDangerously => Self::DrivingDangerously,
             FsmState::ExtremeOperationWarning(at) => Self::ExtremeOperationWarning {
-                entered_at_unix: clock.project(at),
+                entered_at: clock.project(at),
             },
             FsmState::PreparingToStop { .. } => Self::PreparingToStop,
         }
@@ -307,23 +342,23 @@ impl From<&VisibilityContext> for PublishedVisibilityContext {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PublishedHeadlampContext {
     pub state: PublishedHeadlampState,
     /// When ACK wait began, projected to wall clock (`None` if not pending).
-    pub ack_pending_since_at_unix: Option<Duration>,
+    pub ack_pending_since: Option<UnixTimestamp>,
 }
 
 impl PublishedHeadlampContext {
     fn project(h: &HeadlampContext, clock: &SessionClock) -> Self {
         Self {
             state: (&h.state).into(),
-            ack_pending_since_at_unix: h.ack_pending_since.as_ref().map(|t| clock.project(t)),
+            ack_pending_since: h.ack_pending_since.as_ref().map(|t| clock.project(t)),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PublishedVehicleContext {
     pub powertrain: PublishedPowertrainContext,
     pub health: PublishedHealthContext,
@@ -342,16 +377,16 @@ impl PublishedVehicleContext {
     }
 }
 
-/// The serializable, `Instant`-free transition record emitted "to the world".
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The `Instant`-free transition record emitted "to the world".
+#[derive(Debug, Clone, PartialEq)]
 pub struct PublishedTransitionRecord {
     pub car_identity: String,
-    /// Which run produced this record (session start, nanoseconds since `UNIX_EPOCH`).
-    pub session_start_unix_nanos: u128,
+    /// Which run produced this record (Twin session start on the wall clock).
+    pub session_started_at: UnixTimestamp,
     /// Monotonic, clock-independent ledger order (Counter A).
     pub record_seq: u64,
-    /// When this transition was recorded, as a `Duration` since `UNIX_EPOCH`.
-    pub recorded_at_unix: Duration,
+    /// When this transition was recorded on the wall clock.
+    pub recorded_at: UnixTimestamp,
     pub event: PublishedFsmEvent,
     pub old_state: PublishedFsmState,
     pub next_state: PublishedFsmState,
@@ -361,7 +396,7 @@ pub struct PublishedTransitionRecord {
 }
 
 impl PublishedTransitionRecord {
-    /// Project a pure [`RawTransitionRecord`] into its serializable, wall-clock-stamped form.
+    /// Project a pure [`RawTransitionRecord`] into its wall-clock-stamped form.
     ///
     /// Composition root: packages envelope metadata and delegates each field to its published
     /// type's projection (`From` for instant-free fields, `project` where a [`SessionClock`]
@@ -375,9 +410,9 @@ impl PublishedTransitionRecord {
     ) -> Self {
         Self {
             car_identity: car_identity.to_owned(),
-            session_start_unix_nanos: clock.session_start_unix_nanos(),
+            session_started_at: clock.session_started_at(),
             record_seq,
-            recorded_at_unix: clock.project(&raw.at),
+            recorded_at: clock.project(&raw.at),
             event: (&raw.event).into(),
             old_state: PublishedFsmState::project(&raw.old_state, clock),
             next_state: PublishedFsmState::project(&raw.next_state, clock),
@@ -392,4 +427,37 @@ impl PublishedTransitionRecord {
     }
 }
 
+#[cfg(test)]
+mod unix_timestamp_tests {
+    use super::*;
 
+    #[test]
+    fn unix_timestamp_splits_and_reconstructs_exactly() {
+        let value =
+            UnixTimestamp::from_duration_since_epoch(Duration::new(1_752_724_801, 120_000_000));
+        assert_eq!(value.unix_seconds(), 1_752_724_801);
+        assert_eq!(value.nanosecond(), 120_000_000);
+        assert_eq!(
+            value.duration_since_epoch(),
+            Duration::new(1_752_724_801, 120_000_000)
+        );
+        assert_eq!(
+            UnixTimestamp::from_duration_since_epoch(Duration::new(
+                value.unix_seconds(),
+                value.nanosecond(),
+            )),
+            value
+        );
+    }
+
+    #[test]
+    fn unix_timestamp_orders_across_a_second_boundary() {
+        let earlier = UnixTimestamp::from_duration_since_epoch(Duration::new(100, 999_999_999));
+        let later = UnixTimestamp::from_duration_since_epoch(Duration::new(101, 0));
+        assert!(earlier < later);
+        assert_eq!(
+            later.saturating_duration_since(earlier),
+            Duration::from_nanos(1)
+        );
+    }
+}

@@ -547,6 +547,10 @@ cargo run -p wiper_actuator
 
 # Terminal 3 — observer-only Dashboard and in-process twin
 cargo run -p tui_dashboard
+# writes ./observations/<uuid>/{manifest.json,diagnostic.jsonl,ledger.jsonl}
+
+# Optional: choose a different parent directory for captured runs
+cargo run -p tui_dashboard -- --observation-dir /tmp/sdv-runs
 
 # Terminal 4 — finite emulator: PowerOn, 30 telemetry cycles, RPM zero, PowerOff
 EMULATOR_TUNNEL_PROB=0.01 \
@@ -562,6 +566,28 @@ assembly readiness.
 PowerOff transmission does **not** guarantee acceptance. If another FSM guard prevents the twin
 from reaching `Idle`, Dashboard displays the twin-authored rejection and actual final state.
 CSV scenario and echo work are explicitly deferred.
+
+### Captured observations
+
+Dashboard capture is enabled by default. After the Twin boot diagnostic arrives, each invocation
+creates a new UUID-named directory below `./observations` (or the parent supplied with
+`--observation-dir`) containing `manifest.json`, `diagnostic.jsonl`, and `ledger.jsonl`.
+
+Wall-clock fields are stored as numeric objects
+`{ "unix_seconds": <u64>, "nanosecond": <u32> }` (whole Unix seconds plus subsecond nanoseconds).
+The manifest records both capture `created_at` and Twin `session_started_at`.
+`observation-summary` prints wall times as `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`.
+
+Every record consumed from either live stream is persisted before the Dashboard updates its
+latest-state display. The UI can visually skip intermediate updates between renders, but the
+artifact files retain every consumed record in each stream's order.
+
+Summarize a captured run with:
+
+```bash
+cargo run -p observation --bin observation-summary -- \
+  observations/<run-id>
+```
 
 ### Tunable probabilities (optional)
 

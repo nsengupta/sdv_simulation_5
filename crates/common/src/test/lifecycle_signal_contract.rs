@@ -1,6 +1,6 @@
 //! Contract tests for the strict CAN `0x100` lifecycle codec.
 
-use crate::signals::{LifecycleCommand, ID_LIFECYCLE};
+use crate::signals::{ID_LIFECYCLE, LifecycleCommand};
 use socketcan::{CanFrame, EmbeddedFrame, ExtendedId, StandardId};
 
 fn standard_frame(id: u16, data: &[u8]) -> CanFrame {

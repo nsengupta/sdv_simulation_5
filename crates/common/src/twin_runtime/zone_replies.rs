@@ -24,7 +24,9 @@ pub struct ZoneReplies {
 impl ZoneReplies {
     /// Pure tests / local path — no twinlet tell-back; L1 runs in-process.
     pub fn simulate_locally() -> Self {
-        Self { replies: HashMap::new() }
+        Self {
+            replies: HashMap::new(),
+        }
     }
 
     /// Build a `ZoneReplies` carrying exactly one zone reply.

@@ -10,7 +10,7 @@
 
 mod car_behaviour_checker;
 
-pub use car_behaviour_checker::{verify_state_laws, LawViolation, StateLaw, STATE_LAWS};
+pub use car_behaviour_checker::{LawViolation, STATE_LAWS, StateLaw, verify_state_laws};
 
 use crate::fsm::{FsmEvent, FsmState};
 use crate::vehicle_state::VehicleContext;
@@ -212,12 +212,20 @@ pub enum ZoneReply {
 impl ZoneReply {
     /// Borrow the inner [`HeadlampZoneReply`] if this is a headlamp reply.
     pub fn as_headlamp(&self) -> Option<&crate::vehicle_state::HeadlampZoneReply> {
-        if let ZoneReply::Headlamp(r) = self { Some(r) } else { None }
+        if let ZoneReply::Headlamp(r) = self {
+            Some(r)
+        } else {
+            None
+        }
     }
 
     /// Borrow the inner [`WiperZoneReply`] if this is a wiper reply.
     pub fn as_wiper(&self) -> Option<&crate::vehicle_state::WiperZoneReply> {
-        if let ZoneReply::Wiper(r) = self { Some(r) } else { None }
+        if let ZoneReply::Wiper(r) = self {
+            Some(r)
+        } else {
+            None
+        }
     }
 }
 

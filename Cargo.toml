@@ -8,4 +8,5 @@ members = [
     "crates/front_headlamp_actuator",
     "crates/wiper_actuator",
     "crates/tui_dashboard", # Add this here
+    "crates/observation",
 ]

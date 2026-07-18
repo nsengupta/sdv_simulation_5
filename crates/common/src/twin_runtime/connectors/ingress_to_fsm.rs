@@ -1,4 +1,4 @@
-use super::projection::{Projector, ProjectionError};
+use super::projection::{ProjectionError, Projector};
 use crate::digital_twin::TwinMessage;
 use crate::domain_types::TwinIngressEvent;
 use crate::fsm::{FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection, FsmEvent};
@@ -20,7 +20,7 @@ impl Projector<TwinIngressEvent, TwinMessage> for IngressToFsmProjector {
                 }
                 VssSignal::EngineRpm(rpm) => FsmEvent::UpdateRpm(rpm),
                 VssSignal::AmbientLux(lux) => FsmEvent::UpdateAmbientLux(lux),
-                VssSignal::RainDetected(true)  => FsmEvent::RainsStarted,
+                VssSignal::RainDetected(true) => FsmEvent::RainsStarted,
                 VssSignal::RainDetected(false) => FsmEvent::RainsStopped,
             },
             TwinIngressEvent::TimerTick => FsmEvent::TimerTick,

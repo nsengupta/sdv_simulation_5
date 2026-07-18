@@ -107,11 +107,7 @@ impl Default for HeadlampContext {
 impl HeadlampContext {
     /// Pure L1 handler for one zone message — snapshot in, [`HeadlampZoneReply`] out (same pattern
     /// for other assemblies at this layer). Used by tests, [`HeadlampActor`] body, and local demux.
-    pub fn on_receiving_message(
-        &self,
-        msg: HeadlampMessage,
-        now: Instant,
-    ) -> HeadlampZoneReply {
+    pub fn on_receiving_message(&self, msg: HeadlampMessage, now: Instant) -> HeadlampZoneReply {
         let prev_state = self.state;
         let mut next = self.clone();
         let outcomes = next.apply_in_place(msg, prev_state, now);
@@ -231,7 +227,10 @@ impl HeadlampContext {
         let matches_pending = matches!(
             (self.state, direction),
             (HeadlampState::OnRequested, FrontHeadlampSwitchDirection::On)
-                | (HeadlampState::OffRequested, FrontHeadlampSwitchDirection::Off)
+                | (
+                    HeadlampState::OffRequested,
+                    FrontHeadlampSwitchDirection::Off
+                )
         );
         if !matches_pending {
             return;

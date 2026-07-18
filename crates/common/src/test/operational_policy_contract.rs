@@ -9,11 +9,9 @@
 //! **`StartBuzzer`**, latched until corrective action (lamp ON, bright lux, or stationary → Idle).
 
 use crate::fsm::{DomainAction, FsmEvent, FsmState, HeadlampState, Operational};
-use crate::twin_runtime::{run_to_quiescence, twin_turn, ZoneReplies};
+use crate::twin_runtime::{ZoneReplies, run_to_quiescence, twin_turn};
+use crate::vehicle_physics::{FRONT_HEADLAMP_ON_ACK_WAIT, LUX_ON_THRESHOLD, RPM_DRIVING_THRESHOLD};
 use crate::vehicle_state::VehicleContext;
-use crate::vehicle_physics::{
-    FRONT_HEADLAMP_ON_ACK_WAIT, LUX_ON_THRESHOLD, RPM_DRIVING_THRESHOLD,
-};
 use std::time::Instant;
 
 fn ctx_driving_in_dark() -> VehicleContext {
@@ -45,21 +43,26 @@ fn given_driving_in_dark_when_internal_lighting_unsafe_then_l1_unchanged_and_ent
         FsmEvent::Internal(Operational::LightingUnsafe)
     ));
     assert_eq!(
-        result.final_step().modified_ctx, before,
+        result.final_step().modified_ctx,
+        before,
         "internal hop must not run zone_turn / mutate L1"
     );
     assert_eq!(result.final_step().next_state, FsmState::DrivingDangerously);
     assert!(
-        result.final_step().actions.contains(&DomainAction::StartBuzzer),
+        result
+            .final_step()
+            .actions
+            .contains(&DomainAction::StartBuzzer),
         "table edge Driving → DrivingDangerously arms buzzer via output()"
     );
 }
 
 fn assert_no_lighting_unsafe_internal_hop(result: &crate::twin_runtime::QuiescentResult) {
     assert!(
-        !result.hops.iter().any(|h| {
-            matches!(h.event, FsmEvent::Internal(Operational::LightingUnsafe))
-        }),
+        !result
+            .hops
+            .iter()
+            .any(|h| { matches!(h.event, FsmEvent::Internal(Operational::LightingUnsafe)) }),
         "detector must not synthesize LightingUnsafe on this cut"
     );
 }
@@ -80,7 +83,11 @@ fn given_driving_in_dark_when_on_requested_then_no_lighting_unsafe_internal_hop(
         &ZoneReplies::simulate_locally(),
     );
 
-    assert_eq!(result.hops.len(), 1, "external TimerTick only — no internal hop");
+    assert_eq!(
+        result.hops.len(),
+        1,
+        "external TimerTick only — no internal hop"
+    );
     assert_eq!(result.hops[0].event, FsmEvent::TimerTick);
     assert_no_lighting_unsafe_internal_hop(&result);
     assert_eq!(result.final_step().next_state, FsmState::Driving);
@@ -90,7 +97,10 @@ fn given_driving_in_dark_when_on_requested_then_no_lighting_unsafe_internal_hop(
         "zone tick before ACK timeout must not settle to Off"
     );
     assert!(
-        !result.final_step().actions.contains(&DomainAction::StartBuzzer),
+        !result
+            .final_step()
+            .actions
+            .contains(&DomainAction::StartBuzzer),
         "no danger mode while lamp request is pending"
     );
 }
@@ -118,7 +128,11 @@ fn given_driving_in_dark_when_on_request_times_out_then_two_hop_quiescence_enter
         &ZoneReplies::simulate_locally(),
     );
 
-    assert_eq!(result.hops.len(), 2, "external zone hop then internal synthesis");
+    assert_eq!(
+        result.hops.len(),
+        2,
+        "external zone hop then internal synthesis"
+    );
     assert_eq!(result.hops[0].event, FsmEvent::TimerTick);
     assert!(matches!(
         result.hops[1].event,
@@ -137,8 +151,7 @@ fn given_driving_in_dark_when_on_request_times_out_then_two_hop_quiescence_enter
         "zone should emit lighting timeout warning on hop 1"
     );
     assert_eq!(
-        result.hops[1].result.modified_ctx,
-        result.hops[0].result.modified_ctx,
+        result.hops[1].result.modified_ctx, result.hops[0].result.modified_ctx,
         "internal hop must not mutate L1"
     );
     assert_eq!(result.final_step().next_state, FsmState::DrivingDangerously);
@@ -172,8 +185,8 @@ fn given_idle_in_dark_when_on_request_times_out_then_stays_idle_not_dangerous() 
 }
 
 #[test]
-fn given_driving_dangerously_when_timer_tick_without_recovery_then_stays_dangerous_no_duplicate_buzzer(
-) {
+fn given_driving_dangerously_when_timer_tick_without_recovery_then_stays_dangerous_no_duplicate_buzzer()
+ {
     let ctx = ctx_driving_dangerous_after_failed_on();
     let result = twin_turn(
         &FsmState::DrivingDangerously,
