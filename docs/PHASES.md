@@ -167,7 +167,7 @@ the twin's unchanged state and rejection evidence.
 
 ## Phase 4 — Emulator session runner (Mode 1)
 
-**Status:** In progress  
+**Status:** Done  
 **Goal:** Refactor the emulator around a reusable tick/`TelemetrySource` seam and a session
 runner so Mode 1 stops via optional `--readings N` or Ctrl+C through one shared controlled
 trailer. Prepare Mode 2 / semantic golden / CI without delivering them yet.
@@ -200,13 +200,14 @@ Design: [`docs/superpowers/specs/2026-07-18-phase-4-emulator-session-design.md`]
 - [x] Session runner + `TelemetrySource` seam wired; Mode 1 live source on SocketCAN
 - [x] Optional `--readings` and Ctrl+C share one controlled stop
 - [x] Focused emulator tests and docs updated
-- [ ] Manual `vcan0` smoke: Dashboard up → `emulator` or `--readings N` → stop → trailer;
-  Dashboard shows Twin accept or reject of PowerOff
-- [ ] Mark Phase 4 `Done` only after the manual smoke passes
+- [x] Manual `vcan0` smoke: Dashboard up → `emulator` or `--readings N` → stop → trailer;
+  Dashboard shows Twin accept or reject of PowerOff (rejection while not Idle is a valid
+  Twin-authored outcome)
+- [x] Mark Phase 4 `Done` after the manual smoke
 
 Original roadmap “E2E observation golden on `vcan0`” remains a **later gate** (G7 TODO), not
-this phase’s Done criteria. Prefer keeping that green before Phase 5 process split when the
-golden design lands.
+part of this phase’s Done criteria. Prefer keeping that green before Phase 5 process split
+when the golden design lands.
 
 ---
 
