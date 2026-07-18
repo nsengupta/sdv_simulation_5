@@ -1,7 +1,7 @@
 # Phase 4 emulator session runner (Mode 1) design
 
 **Date:** 2026-07-18  
-**Status:** Draft for review  
+**Status:** Approved  
 **Scope:** Emulator-first Phase 4 — shared tick/session architecture, optional `--readings`,
 Ctrl+C controlled stop  
 **Related:** [Phase 2 finite CAN emulator](2026-07-16-phase-2-finite-can-emulator-design.md),

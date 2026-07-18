@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmulatorArgs {
-    pub readings: NonZeroUsize,
+    pub readings: Option<NonZeroUsize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,14 +22,19 @@ where
         .into_iter()
         .map(|value| value.as_ref().to_string())
         .collect();
+    if values.is_empty() {
+        return Ok(EmulatorArgs { readings: None });
+    }
     if values.len() != 2 || values[0] != "--readings" {
-        bail!("usage: emulator --readings <positive integer>");
+        bail!("usage: emulator [--readings <positive integer>]");
     }
     let parsed = values[1]
         .parse::<usize>()
         .with_context(|| format!("invalid --readings value {:?}", values[1]))?;
     let readings = NonZeroUsize::new(parsed).context("--readings must be greater than zero")?;
-    Ok(EmulatorArgs { readings })
+    Ok(EmulatorArgs {
+        readings: Some(readings),
+    })
 }
 
 pub fn parse_probability_override(raw: Option<&str>) -> Result<Option<f32>> {
@@ -62,15 +67,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn readings_argument_is_required_and_positive() {
+    fn readings_argument_is_optional_and_positive_when_present() {
         let overflowing_readings = format!("{}0", usize::MAX);
 
-        assert_eq!(parse_args(["--readings", "30"]).unwrap().readings.get(), 30);
-        assert!(parse_args(std::iter::empty::<&str>()).is_err());
+        assert_eq!(parse_args(std::iter::empty::<&str>()).unwrap().readings, None);
+        assert_eq!(
+            parse_args(["--readings", "30"]).unwrap().readings,
+            NonZeroUsize::new(30)
+        );
         assert!(parse_args(["--readings", "0"]).is_err());
         assert!(parse_args(["--readings", "abc"]).is_err());
         assert!(parse_args(["--readings", overflowing_readings.as_str()]).is_err());
         assert!(parse_args(["--readings", "30", "extra"]).is_err());
+        assert!(parse_args(["--readings"]).is_err());
+        assert!(parse_args(["--unknown"]).is_err());
     }
 
     #[test]

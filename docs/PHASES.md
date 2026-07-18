@@ -13,7 +13,7 @@ Overview and target architecture: [`ARCHITECTURE-OVERVIEW.md`](ARCHITECTURE-OVER
 Phase 1  CAN lifecycle + silent ignore          ← CAN correctness foundation
 Phase 2  Finite lifecycle + telemetry emulator
 Phase 3  Observation capture library + files
-Phase 4  E2E golden regression (CAN, vcan0)
+Phase 4  Emulator session runner (Mode 1); golden/CI TODOs
 Phase 5  Split Gateway ↔ Dashboard processes
 Phase 6  Dashboard embeds emulator + TUI driver controls
 Phase 7  Standalone replay mode
@@ -165,28 +165,48 @@ the twin's unchanged state and rejection evidence.
 
 ---
 
-## Phase 4 — E2E golden regression (CAN defect-free gate)
+## Phase 4 — Emulator session runner (Mode 1)
 
-**Status:** Not started  
-**Goal:** Prove the **CAN-only** stack end-to-end before architectural splits.
+**Status:** In progress  
+**Goal:** Refactor the emulator around a reusable tick/`TelemetrySource` seam and a session
+runner so Mode 1 stops via optional `--readings N` or Ctrl+C through one shared controlled
+trailer. Prepare Mode 2 / semantic golden / CI without delivering them yet.
+
+Design: [`docs/superpowers/specs/2026-07-18-phase-4-emulator-session-design.md`](superpowers/specs/2026-07-18-phase-4-emulator-session-design.md).
 
 ### Scope
 
-1. Deferred Phase 4 script: setup `vcan0`, start actuators + gateway (or transitional combined
-   app) + emulator echo.
-2. Capture observation files (Phase 3).
-3. **`observation-compare`** (or diff tool): compare against committed golden under `testdata/golden/`.
-4. CI job (optional `vcan0` / `#[ignore]` locally) documented in README.
+1. `TelemetrySource` + `LivePhysicsSource` + session runner inside `crates/emulator`.
+2. Optional `--readings N`; omit means run until Ctrl+C (emulator process only).
+3. Shared `controlled_stop`: `EngineRpm(0)` then `PowerOff`.
+4. Unit/session tests without `vcan0`.
+
+### Deferred TODOs (not required for Phase 4 Done)
+
+- Mode 2 file-driven `TelemetrySource` (CSV/JSONL triples; G4)
+- Tick-file generator (N live ticks → file → Mode 2)
+- Semantic golden / `observation-compare` (G7)
+- SocketCAN-capable CI job / scripted multi-process orchestration
 
 ### Tests (mandatory)
 
-- [ ] At least one golden scenario: PowerOn → drive → standstill → PowerOff
-- [ ] Compare tool unit tests
+- [x] Readings-limit session: PowerOn → N triples → Rpm(0) → PowerOff (mock sink)
+- [x] Stop-flag session: same trailer once (simulates Ctrl+C)
+- [x] CLI: optional `--readings`; invalid forms rejected
+- [x] Live source emits usual field set / wire order
 
 ### Acceptance
 
-- Documented command reproduces golden match on clean tree
-- **Gate:** Phase 5+ only after this passes reliably
+- [x] Session runner + `TelemetrySource` seam wired; Mode 1 live source on SocketCAN
+- [x] Optional `--readings` and Ctrl+C share one controlled stop
+- [x] Focused emulator tests and docs updated
+- [ ] Manual `vcan0` smoke: Dashboard up → `emulator` or `--readings N` → stop → trailer;
+  Dashboard shows Twin accept or reject of PowerOff
+- [ ] Mark Phase 4 `Done` only after the manual smoke passes
+
+Original roadmap “E2E observation golden on `vcan0`” remains a **later gate** (G7 TODO), not
+this phase’s Done criteria. Prefer keeping that green before Phase 5 process split when the
+golden design lands.
 
 ---
 
@@ -329,4 +349,4 @@ Absorbs the intent of the former [`TODO-connect-to-twin.md`](../TODO-connect-to-
 
 ---
 
-*Last updated: 2026-07-15*
+*Last updated: 2026-07-18*

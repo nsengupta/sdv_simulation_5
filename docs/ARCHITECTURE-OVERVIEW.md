@@ -108,8 +108,8 @@ lifecycle-passive.
 |--------|--------|--------|
 | Twin location | **In-process** inside `tui_dashboard` via `TwinRuntimeBuilder` | **Gateway** process only |
 | Dashboard ↔ Twin | Tokio MPSC channels in one `main()` | Observation over file/IPC → later Zenoh |
-| Lifecycle | Finite emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
-| Emulator | Separate finite binary; required `--readings N`; lifecycle plus bounded-random telemetry | CSV/echo and embedded-driver options are deferred |
+| Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
+| Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
 | Observation capture | Phase 3 `observation` L6 adapter; Dashboard owns capture while the twin remains in-process | Versioned `manifest.json` plus `diagnostic.jsonl` and `ledger.jsonl`; Gateway assumes ownership in Phase 5 |
 | Replay | None | Phase 6 |
 
@@ -124,10 +124,10 @@ lifecycle-passive.
 | G1 | **Closed:** CAN `0x100` → PowerOn/PowerOff wired at gateway ingress | **1** |
 | G2 | **Closed:** silent ignore while `Off` enforced at the twin FSM boundary | **1** |
 | G3 | **Closed:** finite emulator sends full lifecycle and telemetry on CAN | **2** |
-| G4 | CSV/echo scenario support is explicitly deferred | Future reconsideration |
+| G4 | CSV/echo / Mode 2 file `TelemetrySource` deferred (seam exists; reader TODO) | Future / post–Phase 4 |
 | G5 | Twin co-located with dashboard | **5** |
 | G6 | **Closed:** versioned, human-readable observation artifacts written by the L6 `observation` adapter | **3** |
-| G7 | No E2E golden regression on observation artifacts | **4** |
+| G7 | No E2E observation golden / `observation-compare` yet (Phase 4 delivered emulator session; golden remains TODO) | Later |
 | G8 | Dashboard cannot drive embedded emulator from TUI | **6** |
 | G9 | No standalone replay mode | **7** |
 | G10 | Actuators / emulator / gateway locked to CAN socket | **8** (Zenoh) |
@@ -146,10 +146,11 @@ EMULATOR_RAIN_PROB=0.008 \
 cargo run -p emulator -- --readings 30
 ```
 
-The emulator sends PowerOn first, then `N` RPM/lux/rain cycles, then RPM zero and PowerOff, for
-exactly `3N + 3` frames. Its final PowerOff transmission does not guarantee acceptance: if FSM
-guards reject it, the observer-only Dashboard displays the twin's actual unchanged state and
-rejection evidence. The existing twin startup barrier, verified by contract test, orders immediate
+With `--readings N`, the emulator sends PowerOn, then `N` RPM/lux/rain cycles, then RPM zero and
+PowerOff (`3N + 3` frames). Without `--readings`, it runs until Ctrl+C on the emulator process,
+then sends the same trailer. PowerOff transmission does not guarantee acceptance: if FSM guards
+reject it, the observer-only Dashboard displays the twin's actual unchanged state and rejection
+evidence. The existing twin startup barrier, verified by contract test, orders immediate
 post-PowerOn readings behind assembly startup.
 
 ### 4.1 Observation capture (Phase 3)

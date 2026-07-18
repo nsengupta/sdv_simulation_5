@@ -552,20 +552,24 @@ cargo run -p tui_dashboard
 # Optional: choose a different parent directory for captured runs
 cargo run -p tui_dashboard -- --observation-dir /tmp/sdv-runs
 
-# Terminal 4 — finite emulator: PowerOn, 30 telemetry cycles, RPM zero, PowerOff
+# Terminal 4 — Mode 1 emulator: PowerOn, live ticks, controlled stop
 EMULATOR_TUNNEL_PROB=0.01 \
 EMULATOR_RAIN_PROB=0.008 \
 cargo run -p emulator -- --readings 30
+# or open-ended until Ctrl+C (emulator process only):
+# cargo run -p emulator
 ```
 
-`--readings N` is required and counts logical telemetry cycles. The emulator writes exactly
-`3N + 3` frames: PowerOn first; `N` RPM/lux/rain triples; RPM zero penultimate; PowerOff final.
-It then exits. The twin's existing startup barrier orders immediate post-PowerOn readings after
-assembly readiness.
+`--readings N` is optional and counts logical telemetry cycles. With `--readings N`, the
+emulator writes PowerOn, `N` RPM/lux/rain triples, then the shared trailer (`EngineRpm(0)` then
+PowerOff) and exits. Without `--readings`, it runs until **Ctrl+C on the emulator process**,
+then sends that same trailer. Ctrl+C is handled by the emulator only; Dashboard quit is
+unchanged.
 
-PowerOff transmission does **not** guarantee acceptance. If another FSM guard prevents the twin
-from reaching `Idle`, Dashboard displays the twin-authored rejection and actual final state.
-CSV scenario and echo work are explicitly deferred.
+The twin's existing startup barrier orders immediate post-PowerOn readings after assembly
+readiness. PowerOff transmission does **not** guarantee acceptance. If another FSM guard
+prevents the twin from reaching `Idle`, Dashboard displays the twin-authored rejection and
+actual final state. File-driven Mode 2 / CSV echo remain deferred TODOs.
 
 ### Captured observations
 

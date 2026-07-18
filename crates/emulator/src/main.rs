@@ -1,9 +1,11 @@
 use anyhow::Result;
-use emulator::car_physics::PhysicalCar;
 use emulator::cli::{ProbabilityOverride, apply_probability_override, parse_args};
 use emulator::models::PhysicalWorldModelConfig;
-use emulator::runner::run_finite;
+use emulator::runner::{SessionConfig, run_session};
 use emulator::sink::SocketCanSink;
+use emulator::source::LivePhysicsSource;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{env, thread};
 
 /// Override for the per-tick probability of *entering* a tunnel (low lux → headlamp ON).
@@ -37,9 +39,23 @@ fn main() -> Result<()> {
         "rain entry probability per 100 ms tick",
     );
 
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_handler = Arc::clone(&stop);
+    ctrlc::set_handler(move || {
+        stop_for_handler.store(true, Ordering::SeqCst);
+    })?;
+
     let mut sink = SocketCanSink::open("vcan0")?;
-    let mut car = PhysicalCar::new_with_config(cfg);
-    run_finite(&mut sink, &mut car, args.readings, thread::sleep)
+    let mut source = LivePhysicsSource::from_config(cfg);
+    run_session(
+        &mut sink,
+        &mut source,
+        SessionConfig {
+            max_readings: args.readings,
+        },
+        thread::sleep,
+        || stop.load(Ordering::SeqCst),
+    )
 }
 
 fn apply_env_probability_override(name: &str, target: &mut f32, success_text: &str) {
