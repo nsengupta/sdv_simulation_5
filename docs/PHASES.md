@@ -15,16 +15,17 @@ Phase 2  Finite lifecycle + telemetry emulator
 Phase 3  Observation capture library + files
 Phase 4  Emulator session runner (Mode 1); golden/CI TODOs
 Phase 5  Dashboard presentation rework (driver / engineer / ledger tail)
-Phase 6  Split Gateway ↔ Dashboard processes
-Phase 7  Dashboard embeds emulator + TUI driver controls
-Phase 8  Standalone replay mode
+Phase 6  Split Gateway ↔ Dashboard processes   ← Done
+Phase 7  (cancelled) Embedded emulator + TUI driver — dropped for this simulation
+Phase 8  Standalone replay — TBD next simulation
 ──────── Zenoh / uProtocol boundary ────────
-Phase 9  Transport abstraction (CAN vs Zenoh)
+Phase 9  Transport abstraction (CAN vs Zenoh [+ optional uProtocol])
 Phase 10 Shutdown, disband, polish (TL-6/7/8)
 ```
 
 **Current codebase:** Gateway is the sole twin owner (Phase 6); Dashboard is an observation-only
-UDS consumer. Embedded emulator UI and Zenoh remain later phases.
+UDS consumer. Standalone emulator remains the lifecycle driver. Phase 7 cancelled; Phase 8
+replay TBD next simulation. Next major carrier work is **Phase 9 (Zenoh)**.
 
 ---
 
@@ -317,65 +318,60 @@ Absorbs the former [`TODO-connect-to-twin.md`](../TODO-connect-to-twin.md). Zeno
 
 ## Phase 7 — Dashboard embeds emulator + TUI driver controls
 
-**Status:** Not started  
-**Goal:** Dashboard is **driver + engineer** UI; lifecycle and sensors flow **Dashboard → embedded emulator core → CAN → Gateway**.
+**Status:** Cancelled (this simulation)  
+**Decision (2026-07-19):** Drop embedded emulator / TUI driver controls. Lifecycle and sensors
+stay on the **standalone emulator → CAN → Gateway** path. Dashboard remains observation-only.
 
-### Scope
-
-1. Wire **`emulator-core`** into dashboard (spawn in-process task or thread sending to `vcan0`).
-2. **Deferred Mode A — CSV:** CLI flag passes CSV to embedded emulator.
-3. **Mode B — TUI driver:** keys map to emulator commands (CAN frames, including `0x100`).
-4. Dashboard **never** calls `VehicleController::send_power_on/off()` on the twin.
-5. Engineer panes continue to show Gateway observation streams.
-
-### Tests (mandatory)
-
-- [ ] Embedded emulator unit: TUI command → CAN frame sequence
-- [ ] Integration: button PowerOn → gateway ledger shows PowerOn hop (with split processes)
-
-### Acceptance
-
-- Operator can run full session from dashboard TUI without standalone emulator binary
-- Standalone emulator binary still works for headless CI
+Former intent (not scheduled here): in-process `emulator-core`, CSV Mode A, TUI keys → CAN
+`0x100`. May be reconsidered in a future simulation if product needs a single-binary operator UI.
 
 ---
 
 ## Phase 8 — Standalone replay mode
 
-**Status:** Not started  
-**Goal:** True **reproducibility** — dashboard renders stored runs without live Gateway/Emulator/CAN.
+**Status:** TBD — next simulation  
+**Goal (deferred):** True **reproducibility** — dashboard renders stored runs without live
+Gateway/Emulator/CAN (`tui_dashboard --replay …`, Phase 3 `RunReader`, golden frame checks).
 
-### Scope
-
-1. CLI: `tui_dashboard --replay <observation-dir>` (or `--replay-run <run-id>`).
-2. Reuse Phase 3 reader; drive TUI from archived streams (time-aware or step-through — decide at kickoff).
-3. Engineer workflow: store run → share by run-id → replay later for demos / regression analysis.
-
-### Tests (mandatory)
-
-- [ ] Replay golden run → snapshot hash of rendered state (or key frame assertions)
-- [ ] Missing/corrupt file → clear error
-
-### Acceptance
-
-- Replay matches live capture for at least one golden scenario
+Not in scope for the current simulation’s remaining work. File capture from Phase 6 remains
+the archive that a future replay phase will consume.
 
 ---
 
-## Phase 9 — Transport abstraction: CAN vs Zenoh + uProtocol *(later)*
+## Phase 9 — Transport abstraction: CAN vs Zenoh (+ optional uProtocol) *(next carrier work)*
 
 **Status:** Not started  
-**Prerequisite:** Phases 1–4 green (CAN defect-free).
+**Prerequisite:** Phase 6 Done; CAN path remains the default vehicle bus until Zenoh parity exists.
 
-### Scope
+### Recommended introduction order (observation first)
 
-1. Shared **transport trait** for ingress/egress (emulator, gateway, actuators, dashboard↔gateway observation).
-2. Runtime selection: `--transport can` (default) vs `--transport zenoh` + router config.
-3. uProtocol message mapping documented alongside existing CAN IDs.
+1. **Zenoh router + config** — document local `zenohd` (or peer mode) and keyexpr namespace.
+2. **`ZenohLiveSink` / `ZenohLiveSource`** — implement Phase 6 `LiveSink` / `LiveSource` with the
+   same schema-v2 NDJSON (or length-prefixed) payloads.
+3. **Explicit transport on both binaries (no default)** — `gateway` and `tui_dashboard` each
+   **require** a live-transport flag (e.g. `--transport uds` or `--transport zenoh`). Omitting it
+   is a usage error. Prevents Gateway on UDS + Dashboard on Zenoh (or the reverse) by accident.
+   Transport-specific args follow (`--uds <path>` under `<cwd>/tmp`, or Zenoh config/keyexpr).
+4. **Session features deferred from Phase 6** — multi-subscriber fan-out, reconnect, optional
+   bootstrap/catch-up on join (optional; not day-one).
+5. **Keep CAN for twin ingress/egress** until observation Zenoh is green (emulator/actuators unchanged).
+6. **Optional later:** Zenoh (or Zenoh+uProtocol) for emulator ↔ gateway ↔ actuators; parity
+   tests vs CAN ledger.
+7. **uProtocol (optional layer)** — only if you want Eclipse SDV–aligned service addressing /
+   RPC/pubsub contracts on top of Zenoh; not required to replace UDS observation.
+
+### Scope (when kicked off)
+
+1. Observation live link: Zenoh impl behind existing `LiveSink` / `LiveSource`.
+2. **Required** `--transport uds|zenoh` on **both** `gateway` and `tui_dashboard` (no implicit default).
+3. Document topic/keyexpr map; if uProtocol is adopted, map URIs beside existing CAN IDs.
+4. (Stretch) Shared transport trait for vehicle bus — only after observation Zenoh is stable.
 
 ### Tests (mandatory)
 
-- [ ] Parity tests: same scenario over CAN vs Zenoh produces equivalent twin ledger (modulo timing)
+- [ ] Gateway + Dashboard over Zenoh: boot + ledger events update UI; files still tee’d
+- [ ] (Stretch) Parity: same emulator scenario over CAN-only vehicle bus with UDS vs Zenoh
+      observation produces equivalent archived ledger (modulo timing)
 
 ---
 
@@ -417,4 +413,4 @@ Absorbs the former [`TODO-connect-to-twin.md`](../TODO-connect-to-twin.md). Zeno
 
 ---
 
-*Last updated: 2026-07-18*
+*Last updated: 2026-07-19 — Phase 6 Done; Phase 7 cancelled; Phase 8 TBD next sim; Phase 9 Zenoh next.*
