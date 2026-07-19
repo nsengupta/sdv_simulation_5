@@ -1,4 +1,4 @@
-use super::fit_line;
+use super::{LineRole, PaneLine, fit_line};
 use common::facade::{PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord};
 use std::collections::VecDeque;
 
@@ -23,7 +23,7 @@ impl LedgerTail {
         }
     }
 
-    pub fn lines(&self, width: usize) -> Vec<String> {
+    pub fn lines(&self, width: usize) -> Vec<PaneLine> {
         let last = self.rows.len().saturating_sub(1);
         self.rows
             .iter()
@@ -33,7 +33,7 @@ impl LedgerTail {
     }
 
     /// Fit to a visible row budget (inner pane height), keeping the newest lines.
-    pub fn visible_lines(&self, width: usize, max_rows: usize) -> Vec<String> {
+    pub fn visible_lines(&self, width: usize, max_rows: usize) -> Vec<PaneLine> {
         let mut lines = self.lines(width);
         if max_rows == 0 {
             return Vec::new();
@@ -70,7 +70,7 @@ fn oldest_droppable_index(rows: &VecDeque<PublishedTransitionRecord>) -> Option<
     (0..rows.len()).find(|&i| Some(i) != last_power_on && Some(i) != last_power_off)
 }
 
-pub fn format_ledger_line(row: &PublishedTransitionRecord, width: usize, newest: bool) -> String {
+pub fn format_ledger_line(row: &PublishedTransitionRecord, width: usize, newest: bool) -> PaneLine {
     let body = format!(
         "[{}] | {} | {} -> {}",
         row.record_seq,
@@ -83,11 +83,12 @@ pub fn format_ledger_line(row: &PublishedTransitionRecord, width: usize, newest:
     } else {
         format!("  {body}")
     };
-    fit_line(&line, width)
+    PaneLine::plain(LineRole::LedgerRow, fit_line(&line, width))
 }
 
 fn format_state(state: &PublishedFsmState) -> String {
     match state {
+        PublishedFsmState::Off => "SwitchedOff".to_owned(),
         PublishedFsmState::ExtremeOperationWarning { .. } => {
             "ExtremeOperationWarning".to_owned()
         }
@@ -165,11 +166,11 @@ mod tests {
         }
         let lines = tail.lines(80);
         assert_eq!(lines.len(), 20);
-        assert!(lines[0].contains("[6]"));
-        assert!(lines[19].starts_with("> "));
-        assert!(lines[19].contains("[25]"));
-        assert!(lines[19].contains(" | UpdateRpm(25) | "));
-        assert!(lines[19].contains("Idle -> Driving"));
+        assert!(lines[0].text().contains("[6]"));
+        assert!(lines[19].text().starts_with("> "));
+        assert!(lines[19].text().contains("[25]"));
+        assert!(lines[19].text().contains(" | UpdateRpm(25) | "));
+        assert!(lines[19].text().contains("Idle -> Driving"));
     }
 
     #[test]
@@ -183,7 +184,12 @@ mod tests {
         for seq in 17..=40 {
             tail.push(sample_with_seq(seq, PublishedFsmEvent::TimerTick));
         }
-        let text = tail.lines(100).join("\n");
+        let text: String = tail
+            .lines(100)
+            .iter()
+            .map(|l| l.text())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(text.contains("PowerOff"), "PowerOff must stay visible: {text}");
         assert!(text.contains("PowerOn"), "PowerOn must stay visible: {text}");
         assert_eq!(tail.lines(100).len(), LEDGER_TAIL_N);
@@ -194,8 +200,8 @@ mod tests {
         let mut tail = LedgerTail::new();
         tail.push(sample_with_seq(1, PublishedFsmEvent::UpdateRpm(1)));
         for line in tail.lines(24) {
-            assert_eq!(line.width(), 24);
-            assert!(!line.contains('\n'));
+            assert_eq!(line.text().width(), 24);
+            assert!(!line.text().contains('\n'));
         }
     }
 
@@ -204,5 +210,15 @@ mod tests {
         assert!(is_lifecycle(&PublishedFsmEvent::PowerOn));
         assert!(is_lifecycle(&PublishedFsmEvent::PowerOff));
         assert!(!is_lifecycle(&PublishedFsmEvent::TimerTick));
+    }
+
+    #[test]
+    fn ledger_formats_off_state_as_switched_off() {
+        let mut row = sample_with_seq(1, PublishedFsmEvent::TimerTick);
+        row.old_state = PublishedFsmState::PreparingToStop;
+        row.next_state = PublishedFsmState::Off;
+        let line = format_ledger_line(&row, 80, true).text();
+        assert!(line.contains("PreparingToStop -> SwitchedOff"), "{line}");
+        assert!(!line.contains("-> Off"));
     }
 }

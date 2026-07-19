@@ -63,7 +63,8 @@ pub use vehicle_physics::{
     EXTREME_OPERATION_WARNING_MESSAGE, FRONT_HEADLAMP_OFF_ACK_WAIT, FRONT_HEADLAMP_ON_ACK_WAIT,
     LUX_OFF_THRESHOLD, LUX_ON_THRESHOLD, RPM_DRIVING_THRESHOLD, RPM_EXTREME_OPERATION_THRESHOLD,
     RPM_IDLE, RPM_REDLINE_THRESHOLD, RPM_STRESS_DURATION_THRESHOLD_SECS,
-    SPEED_EXTREME_OPERATION_THRESHOLD_KPH, SPEED_THRESHOLD_WARNING_MESSAGE,
-    calculate_speed_from_rpm, extreme_operation_active, operational_warning_active,
-    speed_threshold_exceeded,
+    SPEED_BAND_GREEN_MAX_KPH, SPEED_BAND_YELLOW_MAX_KPH, SPEED_EXTREME_OPERATION_THRESHOLD_KPH,
+    SPEED_THRESHOLD_WARNING_MESSAGE, SpeedBand, SpeedBarCell, calculate_speed_from_rpm,
+    extreme_operation_active, format_speed_bar, operational_warning_active, speed_band,
+    speed_bar_cells, speed_threshold_exceeded,
 };

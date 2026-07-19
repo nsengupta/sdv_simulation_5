@@ -3,10 +3,12 @@
 mod driver;
 mod engineer;
 mod ledger_tail;
+mod line;
 
 pub use driver::{driver_pane, should_update_notice};
 pub use engineer::engineer_pane;
 pub use ledger_tail::LedgerTail;
+pub use line::{LineRole, PaneLine, Segment, SegmentContent, SegmentStyle};
 
 pub const MISSING: &str = "—";
 

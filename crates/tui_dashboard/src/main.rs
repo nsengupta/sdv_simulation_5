@@ -34,6 +34,7 @@ use common::facade::{
 use common::{DiagnosticKind, DiagnosticRecord};
 use common::PublishedDomainAction;
 use observation::{RunId, RunMetadata, RunWriter, UnixTimestampV1};
+use view::{PaneLine, SegmentContent, SegmentStyle};
 
 const VIRTUAL_CAR_IDENTITY: &str = "My-Opel-Corsa-1.4-GSi";
 const BOOT_DIAGNOSTIC_WAIT: Duration = Duration::from_millis(500);
@@ -390,7 +391,7 @@ fn render_frame(f: &mut Frame, state: &DashboardState) {
             driver
                 .lines
                 .into_iter()
-                .map(|line| Line::from(Span::raw(line)))
+                .map(pane_line_to_ratatui)
                 .collect::<Vec<_>>(),
         )
         .block(driver_block),
@@ -407,7 +408,7 @@ fn render_frame(f: &mut Frame, state: &DashboardState) {
             engineer
                 .lines
                 .into_iter()
-                .map(|line| Line::from(Span::raw(line)))
+                .map(pane_line_to_ratatui)
                 .collect::<Vec<_>>(),
         )
         .block(engineer_block),
@@ -422,7 +423,7 @@ fn render_frame(f: &mut Frame, state: &DashboardState) {
         Paragraph::new(
             ledger_lines
                 .into_iter()
-                .map(|line| Line::from(Span::raw(line)))
+                .map(pane_line_to_ratatui)
                 .collect::<Vec<_>>(),
         )
         .block(ledger_block),
@@ -436,6 +437,36 @@ fn render_frame(f: &mut Frame, state: &DashboardState) {
         Paragraph::new(Line::from(Span::raw(KEYS_FOOTER))).block(keys_block),
         outer[2],
     );
+}
+
+fn pane_line_to_ratatui(line: PaneLine) -> Line<'static> {
+    let mut spans = Vec::new();
+    for seg in line.segments {
+        match seg.content {
+            SegmentContent::Text(text) => {
+                spans.push(Span::styled(text, segment_style(seg.style)));
+            }
+            SegmentContent::SpeedBar { cells } => {
+                for cell in cells {
+                    let ch = if cell.filled { "|" } else { "." };
+                    let style = segment_style(SegmentStyle::from_speed_band(cell.band));
+                    spans.push(Span::styled(ch, style));
+                }
+            }
+            SegmentContent::Swatch | SegmentContent::Icon => {}
+        }
+    }
+    Line::from(spans)
+}
+
+fn segment_style(token: SegmentStyle) -> Style {
+    match token {
+        SegmentStyle::Default => Style::default(),
+        SegmentStyle::Mute => Style::default().fg(Color::DarkGray),
+        SegmentStyle::ZoneGreen => Style::default().fg(Color::Green),
+        SegmentStyle::ZoneYellow => Style::default().fg(Color::Yellow),
+        SegmentStyle::ZoneRed => Style::default().fg(Color::Red),
+    }
 }
 
 /// Before the first ledger row (PowerOn), twin is installed but not yet powered for observation panes.
@@ -618,9 +649,9 @@ mod tests {
         let engineer = view::engineer_pane(None, 40);
         assert_eq!(driver.lines.len(), 3);
         assert_eq!(engineer.lines.len(), 3);
-        assert!(driver.lines[1].contains("PowerOn"));
-        assert!(driver.lines[1].contains("CAN"));
-        assert!(engineer.lines[0].starts_with("Twin installed."));
+        assert!(driver.lines[1].text().contains("PowerOn"));
+        assert!(driver.lines[1].text().contains("CAN"));
+        assert!(engineer.lines[0].text().starts_with("Twin installed."));
     }
 
     #[test]

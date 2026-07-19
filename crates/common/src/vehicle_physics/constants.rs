@@ -21,7 +21,15 @@ pub const RPM_EXTREME_OPERATION_THRESHOLD: u16 = 5500;
 
 /// Ground speed (km/h) above this while RPM exceeds [`RPM_EXTREME_OPERATION_THRESHOLD`] triggers
 /// extreme-operation warning (unusual for commuter traffic).
+/// Also the Dashboard speed-bar full scale.
 pub const SPEED_EXTREME_OPERATION_THRESHOLD_KPH: u16 = 160;
+
+/// Dashboard speed-bar / readout: green band is `0..=` this value (km/h).
+pub const SPEED_BAND_GREEN_MAX_KPH: u16 = 100;
+
+/// Dashboard speed-bar / readout: yellow band is
+/// `(SPEED_BAND_GREEN_MAX_KPH + 1)..=` this value; above is red (through full scale).
+pub const SPEED_BAND_YELLOW_MAX_KPH: u16 = 150;
 
 /// Log text when derived speed alone exceeds the commuter threshold.
 pub const SPEED_THRESHOLD_WARNING_MESSAGE: &str = "SpeedThresholdExceeded: ground speed > 160 km/h";

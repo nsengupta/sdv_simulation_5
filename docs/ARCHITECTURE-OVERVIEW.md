@@ -111,7 +111,7 @@ lifecycle-passive.
 | Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
 | Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
 | Observation capture | Phase 3 `observation` L6 adapter; Dashboard owns capture while the twin remains in-process | Versioned `manifest.json` plus `diagnostic.jsonl` and `ledger.jsonl`; Gateway assumes ownership in Phase 6 |
-| Dashboard presentation | Phase 5 driver / engineer / ledger-tail view over existing emissions | Honest gaps (`—`) until Twin fields are added |
+| Dashboard presentation | Phase 5 driver / engineer / ledger-tail view over existing emissions; follow-up: structured `PaneLine` + zoned speed bar (`common` bands) before Phase 6 | Honest gaps (`—`) until Twin fields are added; inline widgets (visibility/weather) later on same model |
 | Replay | None | Phase 8 |
 
 **Naming:** keep crate **`tui_dashboard`** for now. **`simulator`** is reserved for a possible future umbrella binary name.

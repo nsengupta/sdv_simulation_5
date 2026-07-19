@@ -129,14 +129,16 @@ Reuse existing dashboard truncation patterns where they already exist; centraliz
 4. Ledger arrival → update latest ledger, append to tail (cap 20), refresh all three views.
 5. Twin remains authoritative; Dashboard never injects lifecycle.
 
-## Out of scope
+## Out of scope (original Done gate)
 
-- Colour / emoji coding (discuss later)
 - Twin emission enrichments (rain, wiper status, ROB depth, assembly actors) — open TODOs after live use
-- Gateway/Dashboard process split (Phase 6)
+- Gateway/Dashboard process split (Phase 6) — **phase numbers 6+ stay as listed above**
 - Embedded emulator / driver controls (Phase 7)
 - Replay (Phase 8)
 - Zenoh / shutdown polish (Phases 9–10)
+
+Structured pane lines and zoned speed colour are **Phase 5 follow-up** (below), not a new
+roadmap phase and not folded into Phase 6.
 
 ## Mandatory tests
 
@@ -165,11 +167,60 @@ Reuse existing dashboard truncation patterns where they already exist; centraliz
 - `docs/PHASES.md`, `docs/ARCHITECTURE-OVERVIEW.md`, `README.md` (Dashboard layout blurb)
 - `DESIGN.md` §16.2 layout sketch (align with new panes)
 
-## Explicit follow-ups (after live use)
+## Follow-up — structured lines and zoned speed (still Phase 5)
 
-1. Rain line — Twin field or diagnostic convention  
+Land **before Phase 6**. Does not renumber phases. Original Phase 5 Done (layout + smoke)
+remains; this is presentation hardening on the same gate.
+
+### Decisions (locked)
+
+| Topic | Choice |
+|-------|--------|
+| Bar colouring | **B — zoned segments:** each cell’s colour follows its place on the 0…160 scale, not a single colour for the whole fill |
+| Empty cells | Glyph `.` (not a filled/dim block) |
+| `Speed:` label | Default (unstyled) |
+| Numeric `N/160 km/h` | Colour of **current** speed band |
+| Ledger newest `>` | Default for now |
+| Constants | Band limits and full scale from **`common`** only (one truth app-wide) |
+| Bands | green `0..=100`, yellow `101..=150`, red `>=151`; full scale = `SPEED_EXTREME_OPERATION_THRESHOLD_KPH` |
+
+### View model
+
+Replace `Vec<String>` pane lines with structured lines so every row carries properties and
+future widgets do not require another reshape:
+
+```text
+PaneLine { role, segments[] }
+
+Segment
+  style: SegmentStyle          // semantic token (ZoneGreen, Mute, Default, …) — not Ratatui Color
+  content:
+    Text("…")
+    | SpeedBar { cells[] }     // each cell: '.' or '|' + zone token
+    | Swatch { … }             // future: visibility low/high boxes
+    | Icon { … }               // future: rain / clear-day glyphs
+```
+
+- **View** stays free of Ratatui; **render** maps tokens → `Style` / widgets.
+- All driver, engineer, and ledger lines use `PaneLine` (simple rows = one `Text` segment).
+- Heads-up: Diagnostic and Ledger will later embed **inline widgets** on some lines
+  (e.g. low visibility = brown box, high = bright yellow; rain = cloud/rain symbol,
+  clear = sunlit-day symbol). Those use `Swatch` / `Icon` on the same model; blocked on
+  Twin fields where noted.
+
+### Follow-up acceptance (when implemented)
+
+- Every pane line is a `PaneLine` with role + segments.
+- Speed bar shows zone colours; empty `.`; label Default; numeric suffix band-coloured.
+- Band/full-scale constants imported from `common` only.
+- `cargo test -p tui_dashboard` / `common` display helpers green; optional `vcan0` colour smoke.
+
+## Explicit follow-ups (data / later polish)
+
+1. Rain line — Twin field or diagnostic convention (+ weather `Icon` when ready)  
 2. Wiper status line  
 3. Active ROB turns  
 4. Assembly actor statuses  
-5. Colour / emoji coding for driver keywords  
-6. Phase 6 process split (only once emissions prove sufficient)
+5. Notice-level colour tokens / emoji on filtered Notice lines  
+6. Visibility `Swatch` using `common` lux thresholds when product wants the boxes  
+7. Phase 6 process split (only once emissions prove sufficient; **not** this follow-up)

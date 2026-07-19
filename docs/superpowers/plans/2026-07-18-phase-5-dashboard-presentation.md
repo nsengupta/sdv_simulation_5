@@ -396,7 +396,8 @@ Expected: PASS / SUCCESS.
 
 Phase 5 section status: `In progress` until smoke; checkboxes per design acceptance.
 
-Follow-up TODOs listed under Phase 5 deferred (Rain, Wipers, ROB, colour, then Phase 6 split).
+Follow-up TODOs listed under Phase 5 (structured lines / zoned speed = Task 6; Rain/Wipers/ROB
+data; then Phase 6 split). **Do not renumber phases 6+.**
 
 - [ ] **Step 1: Apply doc edits**
 
@@ -420,6 +421,47 @@ Expected: PASS.
 
 ---
 
+### Task 6: Phase 5 follow-up — structured `PaneLine` + zoned speed bar
+
+> Run **after** original Phase 5 Done; **before** Phase 6. Phases 6–10 stay numbered as today.
+
+**Spec:** design § Follow-up — structured lines and zoned speed.
+
+**Files (expected):**
+- Modify: `crates/common/src/vehicle_physics/constants.rs` — display band constants
+  (`SPEED_BAND_GREEN_MAX_KPH` = 100, `SPEED_BAND_YELLOW_MAX_KPH` = 150; full scale remains
+  `SPEED_EXTREME_OPERATION_THRESHOLD_KPH`)
+- Modify: `crates/common/src/vehicle_physics/display.rs` — zone/band helpers (pure; no Ratatui)
+- Modify: `crates/tui_dashboard/src/view/mod.rs` — `PaneLine`, `LineRole`, `Segment`,
+  `SegmentStyle`, `SegmentContent` (`Text` | `SpeedBar` | reserved `Swatch` | `Icon`)
+- Modify: `crates/tui_dashboard/src/view/{driver,engineer,ledger_tail}.rs` — emit `Vec<PaneLine>`
+- Modify: `crates/tui_dashboard/src/main.rs` — `PaneLine` → ratatui `Line` style map
+- Modify: `docs/PHASES.md` — check follow-up boxes when done
+
+**Locked UI rules:**
+- Zoned bar **B**; empty cell `.`; `Speed:` Default; numeric suffix = current band colour.
+- Ledger `>` Default.
+- All constants from `common` only.
+- Heads-up only: visibility swatch / weather icon segments when Twin data exists — not Done
+  for this task.
+
+- [x] **Step 1: `common` band constants + pure zone/cell helper tests**
+
+- [x] **Step 2: Introduce `PaneLine` model; migrate all panes to single-segment `Text` (look unchanged)**
+
+- [x] **Step 3: Wire renderer style map; keep Default look**
+
+- [x] **Step 4: Multi-segment zoned `SpeedBar` + band-coloured numeric suffix**
+
+- [x] **Step 5: Update view tests; `cargo test -p common` display + `cargo test -p tui_dashboard`**
+
+- [ ] **Step 6: Optional `vcan0` colour smoke; tick PHASES follow-up checkboxes**
+  (structure + zoned speed checkboxes ticked in PHASES; heads-up widgets still open)
+
+- [ ] **Step 7: Commit only if user requested**
+
+---
+
 ## Spec coverage checklist
 
 | Spec item | Task |
@@ -432,7 +474,8 @@ Expected: PASS.
 | Layout Session / driver / eng / ledger / keys | Task 4 |
 | Capture unchanged | Task 4 (no capture API change) |
 | Phase renumber 6–10 | Task 5 |
-| Colour/emoji / Twin enrichments / process split out of scope | All |
+| Colour/emoji / Twin enrichments / process split out of scope (original Done) | Tasks 1–5 |
+| `PaneLine` + zoned speed + `common` bands (follow-up) | Task 6 |
 
 ## Plan self-review
 
@@ -440,3 +483,4 @@ Expected: PASS.
 - Bar full-scale pinned to existing `SPEED_EXTREME_OPERATION_THRESHOLD_KPH`.
 - Binary crate tests use `cargo test -p tui_dashboard <filter>` (no false `--lib` requirement once modules exist under `main`).
 - Commits gated on user request (design+plan already authorized as a docs commit separately).
+- Task 6 does **not** invent a Phase 6 presentation slice or renumber later phases.

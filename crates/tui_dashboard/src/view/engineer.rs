@@ -1,10 +1,10 @@
-use super::{MISSING, fit_line};
+use super::{MISSING, LineRole, PaneLine};
 use common::facade::{
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampState, PublishedTransitionRecord,
 };
 
 pub struct EngineerPane {
-    pub lines: Vec<String>,
+    pub lines: Vec<PaneLine>,
 }
 
 pub fn engineer_pane(ledger: Option<&PublishedTransitionRecord>, width: usize) -> EngineerPane {
@@ -16,25 +16,32 @@ pub fn engineer_pane(ledger: Option<&PublishedTransitionRecord>, width: usize) -
                 "Ledger and diagnostics appear after lifecycle starts.",
             ]
             .into_iter()
-            .map(|line| fit_line(line, width))
+            .map(|line| PaneLine::plain_fitted(LineRole::Standby, line, width))
             .collect(),
         };
     }
 
     let row = ledger.expect("checked above");
     let lines = vec![
-        fit_line(
+        PaneLine::plain_fitted(
+            LineRole::EngineerState,
             &format!("Current state: {}", format_state(&row.next_state)),
             width,
         ),
-        fit_line(
+        PaneLine::plain_fitted(
+            LineRole::EngineerEvent,
             &format!("Last event: {}", format_event(&row.event)),
             width,
         ),
         // TODO(phase-5-follow-up): Twin ROB depth emission.
-        fit_line(&format!("Active ROB turns: {MISSING}"), width),
-        fit_line("Sub-assemblies:", width),
-        fit_line(
+        PaneLine::plain_fitted(
+            LineRole::EngineerRob,
+            &format!("Active ROB turns: {MISSING}"),
+            width,
+        ),
+        PaneLine::plain_fitted(LineRole::EngineerHeading, "Sub-assemblies:", width),
+        PaneLine::plain_fitted(
+            LineRole::EngineerAssembly,
             &format!(
                 "  Headlamp: {}",
                 format_headlamp(row.current_ctx.headlamp.state)
@@ -42,7 +49,11 @@ pub fn engineer_pane(ledger: Option<&PublishedTransitionRecord>, width: usize) -
             width,
         ),
         // TODO(phase-5-follow-up): Twin wiper actor status.
-        fit_line(&format!("  Wiper: {MISSING}"), width),
+        PaneLine::plain_fitted(
+            LineRole::EngineerAssembly,
+            &format!("  Wiper: {MISSING}"),
+            width,
+        ),
     ];
     EngineerPane { lines }
 }
@@ -129,10 +140,18 @@ mod tests {
     #[test]
     fn engineer_fills_state_and_event_rob_placeholder() {
         let pane = engineer_pane(Some(&sample_ledger()), 48);
-        assert!(pane.lines[0].contains("Current state: Driving"));
-        assert!(pane.lines[1].contains("Last event: UpdateAmbientLux(120)"));
-        assert!(pane.lines.iter().any(|l| l.contains("Active ROB turns: —")));
-        assert!(pane.lines.iter().any(|l| l.contains("Headlamp: On")));
-        assert!(pane.lines.iter().any(|l| l.contains("Wiper: —")));
+        assert!(pane.lines[0].text().contains("Current state: Driving"));
+        assert!(
+            pane.lines[1]
+                .text()
+                .contains("Last event: UpdateAmbientLux(120)")
+        );
+        assert!(
+            pane.lines
+                .iter()
+                .any(|l| l.text().contains("Active ROB turns: —"))
+        );
+        assert!(pane.lines.iter().any(|l| l.text().contains("Headlamp: On")));
+        assert!(pane.lines.iter().any(|l| l.text().contains("Wiper: —")));
     }
 }

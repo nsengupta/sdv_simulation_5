@@ -1,13 +1,16 @@
-use super::{MISSING, fit_line};
+use super::{MISSING, LineRole, PaneLine, Segment, SegmentContent, SegmentStyle};
 use common::DiagnosticRecord;
 use common::facade::{
     DiagnosticKind, DiagnosticLevel, PublishedHeadlampState, PublishedTransitionRecord,
 };
 use common::fsm::FrontHeadlampIncompleteCause;
-use common::vehicle_physics::format_speed_bar;
+use common::vehicle_physics::{
+    SPEED_EXTREME_OPERATION_THRESHOLD_KPH, speed_band, speed_bar_cells,
+};
+use unicode_width::UnicodeWidthStr;
 
 pub struct DriverPane {
-    pub lines: Vec<String>,
+    pub lines: Vec<PaneLine>,
 }
 
 /// Whether an Observer Notice should adopt this diagnostic as the latest displayed notice.
@@ -31,17 +34,29 @@ pub fn driver_pane(
                 "Ledger and diagnostics appear after lifecycle starts.",
             ]
             .into_iter()
-            .map(|line| fit_line(line, width))
+            .map(|line| PaneLine::plain_fitted(LineRole::Standby, line, width))
             .collect(),
         };
     }
 
     let mut lines = Vec::with_capacity(4);
-    lines.push(fit_line(&format_notice(diagnostic), width));
-    lines.push(fit_line(&format_speed_line(ledger, width), width));
-    lines.push(fit_line(&format_visibility_line(ledger), width));
-    // TODO(phase-5-follow-up): Twin rain / wiper presentation fields.
-    lines.push(fit_line(&format_weather_line(), width));
+    lines.push(PaneLine::plain_fitted(
+        LineRole::Notice,
+        &format_notice(diagnostic),
+        width,
+    ));
+    lines.push(speed_pane_line(ledger, width));
+    lines.push(PaneLine::plain_fitted(
+        LineRole::Visibility,
+        &format_visibility_line(ledger),
+        width,
+    ));
+    // TODO(phase-5-follow-up): Twin rain / wiper presentation fields (+ Icon segments).
+    lines.push(PaneLine::plain_fitted(
+        LineRole::Weather,
+        &format_weather_line(),
+        width,
+    ));
     DriverPane { lines }
 }
 
@@ -130,20 +145,41 @@ fn format_level(level: DiagnosticLevel) -> &'static str {
     }
 }
 
-fn format_speed_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> String {
-    use common::vehicle_physics::SPEED_EXTREME_OPERATION_THRESHOLD_KPH;
-    use unicode_width::UnicodeWidthStr;
-
+fn speed_pane_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> PaneLine {
     let Some(row) = ledger else {
-        return format!("Speed: {MISSING}");
+        return PaneLine::plain_fitted(LineRole::Speed, &format!("Speed: {MISSING}"), width);
     };
     let speed = row.current_ctx.powertrain.speed_kph;
+    let band = speed_band(speed);
+    let suffix_body = format!("{speed}/{SPEED_EXTREME_OPERATION_THRESHOLD_KPH} km/h");
     let prefix = "Speed: [";
-    let suffix = format!("] {speed}/{SPEED_EXTREME_OPERATION_THRESHOLD_KPH} km/h");
-    let overhead = prefix.width() + suffix.width();
+    let mid = "] ";
+    let overhead = prefix.width() + mid.width() + suffix_body.width();
     let bar_width = width.saturating_sub(overhead);
-    let bar = format_speed_bar(speed, bar_width);
-    format!("{prefix}{bar}{suffix}")
+    let cells = speed_bar_cells(speed, bar_width);
+
+    let line = PaneLine {
+        role: LineRole::Speed,
+        segments: vec![
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Text(prefix.to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::SpeedBar { cells },
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Text(mid.to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::from_speed_band(band),
+                content: SegmentContent::Text(suffix_body),
+            },
+        ],
+    };
+    line.pad_to_width(width)
 }
 
 fn format_visibility_line(ledger: Option<&PublishedTransitionRecord>) -> String {
@@ -180,6 +216,7 @@ mod tests {
         PublishedPowertrainContext, PublishedVehicleContext, PublishedVisibilityContext,
         PublishedWheelRpm, UnixTimestamp,
     };
+    use common::vehicle_physics::SpeedBand;
     use std::time::Duration;
 
     fn sample_diag(kind: DiagnosticKind) -> DiagnosticRecord {
@@ -244,12 +281,45 @@ mod tests {
         });
         let ledger = sample_ledger(80, 150, PublishedHeadlampState::On);
         let pane = driver_pane(Some(&diag), Some(&ledger), 48);
-        assert!(pane.lines[0].contains("Notice: Warning"));
-        assert!(pane.lines[0].contains("tunnel ahead"));
-        let speed_line = &pane.lines[1];
+        assert_eq!(pane.lines[0].role, LineRole::Notice);
+        assert!(pane.lines[0].text().contains("Notice: Warning"));
+        assert!(pane.lines[0].text().contains("tunnel ahead"));
+        let speed_line = pane.lines[1].text();
         assert!(speed_line.starts_with("Speed: ["));
         assert!(speed_line.contains("80/160 km/h"));
         assert!(speed_line.contains('|'));
+        assert_eq!(pane.lines[1].role, LineRole::Speed);
+    }
+
+    #[test]
+    fn speed_line_zones_and_numeric_band_style() {
+        let ledger = sample_ledger(155, 0, PublishedHeadlampState::Off);
+        let pane = driver_pane(None, Some(&ledger), 64);
+        let speed = &pane.lines[1];
+        let bar = speed
+            .segments
+            .iter()
+            .find_map(|s| match &s.content {
+                SegmentContent::SpeedBar { cells } => Some(cells),
+                _ => None,
+            })
+            .expect("speed bar segment");
+        assert!(bar.iter().any(|c| c.band == SpeedBand::Green));
+        assert!(bar.iter().any(|c| c.band == SpeedBand::Yellow));
+        assert!(bar.iter().any(|c| c.band == SpeedBand::Red));
+        let numeric = speed
+            .segments
+            .iter()
+            .find(|s| matches!(&s.content, SegmentContent::Text(t) if t.contains("km/h")))
+            .expect("numeric suffix");
+        assert_eq!(numeric.style, SegmentStyle::ZoneRed);
+        assert!(
+            speed
+                .segments
+                .iter()
+                .any(|s| matches!(&s.content, SegmentContent::Text(t) if t.starts_with("Speed:"))
+                    && s.style == SegmentStyle::Default)
+        );
     }
 
     #[test]
@@ -260,7 +330,8 @@ mod tests {
         });
         let ledger = sample_ledger(0, 100, PublishedHeadlampState::Ready);
         let pane = driver_pane(Some(&diag), Some(&ledger), 80);
-        let notice = pane.lines[0].trim_end();
+        let notice = pane.lines[0].text();
+        let notice = notice.trim_end();
         assert!(notice.contains("not confirmed"));
         assert!(notice.contains("timeout"));
         assert!(!notice.contains('✅'));
@@ -286,9 +357,13 @@ mod tests {
         });
         let ledger = sample_ledger(0, 100, PublishedHeadlampState::Off);
         let pane = driver_pane(Some(&diag), Some(&ledger), 60);
-        assert!(pane.lines[0].starts_with("Notice: Must be IDLE before POWER-OFF"));
-        assert!(!pane.lines[0].contains("My-Opel"));
-        assert!(!pane.lines[0].contains("REJECTED"));
+        assert!(
+            pane.lines[0]
+                .text()
+                .starts_with("Notice: Must be IDLE before POWER-OFF")
+        );
+        assert!(!pane.lines[0].text().contains("My-Opel"));
+        assert!(!pane.lines[0].text().contains("REJECTED"));
     }
 
     #[test]
@@ -298,10 +373,10 @@ mod tests {
         let line = pane
             .lines
             .iter()
-            .find(|l| l.contains("Visibility:"))
+            .find(|l| l.text().contains("Visibility:"))
             .expect("visibility line");
-        assert!(line.contains("Visibility: (150 lux)"));
-        assert!(line.contains("Headlamps: On"));
+        assert!(line.text().contains("Visibility: (150 lux)"));
+        assert!(line.text().contains("Headlamps: On"));
     }
 
     #[test]
@@ -314,23 +389,22 @@ mod tests {
         let line = pane
             .lines
             .iter()
-            .find(|l| l.contains("Rain:"))
+            .find(|l| l.text().contains("Rain:"))
             .expect("weather line");
-        assert!(line.contains("Rain: —"));
-        assert!(line.contains("Wipers: —"));
+        assert!(line.text().contains("Rain: —"));
+        assert!(line.text().contains("Wipers: —"));
     }
 
     #[test]
     fn driver_lines_never_exceed_width_or_wrap() {
-        use unicode_width::UnicodeWidthStr;
         let diag = sample_diag(DiagnosticKind::Text {
             text: "x".repeat(200),
         });
         let ledger = sample_ledger(40, 10, PublishedHeadlampState::OnRequested);
         let pane = driver_pane(Some(&diag), Some(&ledger), 32);
         for line in &pane.lines {
-            assert_eq!(line.width(), 32, "{line:?}");
-            assert!(!line.contains('\n'));
+            assert_eq!(line.display_width(), 32, "{:?}", line.text());
+            assert!(!line.text().contains('\n'));
         }
     }
 
@@ -347,7 +421,7 @@ mod tests {
             Some(&sample_ledger(120, 0, PublishedHeadlampState::Off)),
             width,
         );
-        let count = |line: &str| line.chars().filter(|c| *c == '|').count();
+        let count = |line: &PaneLine| line.text().chars().filter(|c| *c == '|').count();
         assert!(count(&high.lines[1]) > count(&low.lines[1]));
     }
 }

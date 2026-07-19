@@ -754,6 +754,13 @@ Dashboard keys **`s`/`o`** exist **transitionally** in the combined app today.
 Before the **first post-PowerOn ledger row**, panes show a short install placeholder; the
 Session row still reflects the boot diagnostic from the twin.
 
+**Phase 5 follow-up (before Phase 6; phases 6+ unchanged):** structured `PaneLine` /
+segment model for every pane line (semantic style tokens; optional future inline widgets
+such as visibility swatches and weather icons); zoned speed bar colours from **`common`**
+band constants (green ≤100, yellow ≤150, red above; full scale 160). See
+[`docs/PHASES.md`](docs/PHASES.md) Phase 5 follow-up and the Phase 5 presentation design
+§ Follow-up.
+
 **Target flow:**
 
 ```text

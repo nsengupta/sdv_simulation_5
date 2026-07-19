@@ -236,10 +236,29 @@ facts (no icons in payloads). Observer Notice filters the stream (e.g. hides `Ti
 headlamp happy-path ACK is zone/context only). Observation archive schema version is **2**
 (`kind` tagged union). Gateway ingress ACK `println!` is opt-in and off under Dashboard.
 
-### Deferred TODOs (not required for Phase 5 Done)
+### Follow-up (still Phase 5; before Phase 6 — phases 6+ unchanged)
+
+Original Done criteria above stay satisfied. Prefer landing this **presentation structure**
+before the process split so Dashboard does not freeze on `Vec<String>` lines.
+
+Design detail: [`2026-07-18-phase-5-dashboard-presentation-design.md`](superpowers/specs/2026-07-18-phase-5-dashboard-presentation-design.md) § Follow-up — structured lines.  
+Plan tasks: [`2026-07-18-phase-5-dashboard-presentation.md`](superpowers/plans/2026-07-18-phase-5-dashboard-presentation.md) Task 6.
+
+- [x] Structured `PaneLine` for **every** driver / engineer / ledger line: `role` + `segments[]`
+  (semantic style tokens; view stays Ratatui-free). Segment content is an enum so later
+  lines can mix text with widgets (`Text` | `Swatch` | `Icon` | `SpeedBar`, …).
+- [x] Zoned speed bar (**B**): cells painted by scale zone from **`common`** band constants
+  (green `0..=100`, yellow `101..=150`, red `>=151`; full scale =
+  `SPEED_EXTREME_OPERATION_THRESHOLD_KPH`). Empty cells stay `.`. Label `Speed:` Default;
+  numeric `N/160 km/h` uses current-band colour. Ledger `>` stays Default for now.
+- [ ] Heads-up (same model, not required to close the follow-up): visibility swatch
+  (e.g. low brown / high bright yellow), weather glyph (rain cloud / clear day) when Twin
+  fields exist; Notice colour tokens later.
+
+### Deferred TODOs (not required for Phase 5 Done or follow-up gate)
 
 - Twin fields: rain, wiper status on Dashboard lines, ROB depth, assembly actors (after live use)
-- Colour / Ratatui icons on filtered Notice lines
+- Colour / Ratatui icons on filtered Notice lines (beyond speed zones)
 - Process split (Phase 6)
 - Zone-encased headlamp unconfirmed (TODO on `DiagnosticKind`)
 
