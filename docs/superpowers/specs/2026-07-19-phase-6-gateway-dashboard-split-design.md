@@ -78,7 +78,7 @@ Dashboard `q` closes the TUI and the UDS connection only. The twin keeps running
 |-------|----------------|
 | `RunWriter` / `RunReader` | Unchanged Phase 3 archival contract (schema v2) |
 | `LiveEvent` | Typed live messages: session control + diagnostic/ledger **schema v2 DTOs** |
-| `LiveSink` | Trait: emit hello / run_started / events; finish. **No UDS types in the trait** |
+| `LiveSink` | Trait: emit hello / events; finish. **No UDS types in the trait** |
 | `LiveSource` | Trait: receive the same logical stream. **No UDS types in the trait** |
 | `ObservationTee` | Drains live `common` records → convert **once** → `RunWriter` + `LiveSink` |
 | `UdsLiveSink` / `UdsLiveSource` | Phase 6 transport impls; framing isolated here |
@@ -93,7 +93,7 @@ pane logic (Phase 9).
 - CLI: `--uds <path>` (optional bind), `--observation-dir <parent>` (default `./observations`),
   `--connect-timeout <secs>` (wait for Dashboard when `--uds` is set; default e.g. 60).
 - **With `--uds`:** bind → accept one client → `hello` → install twin → boot → `RunWriter` →
-  `run_started` → tee (file + UDS).
+  tee (file + UDS). Gateway prints the created run directory on stderr for operators.
 - **Without `--uds` (headless / CI):** install immediately; still run `RunWriter` tee to files
   only (no live sink). Preserves today’s gateway-alone workflows and integration tests.
 - Optional stdout observers remain orthogonal to the tee (existing flags).
@@ -144,25 +144,14 @@ Disconnect ends the live feed; Gateway continues twin + file capture. No reconne
 
 ### 4.1 Line types
 
-**Hello** — once after accept, before twin install:
+**Hello** — once after accept, before twin install (live-session handshake only; no archive
+identity — run directory / replay is Phase 8):
 
 ```json
 {
   "type": "hello",
   "schema_version": 2,
-  "run_id": null,
-  "observation_dir": "...",
   "vehicle": { "identity": "..." }
-}
-```
-
-**Run started** — once `RunWriter` exists (after boot diagnostic):
-
-```json
-{
-  "type": "run_started",
-  "run_id": "...",
-  "run_dir": "..."
 }
 ```
 
@@ -172,6 +161,10 @@ Disconnect ends the live feed; Gateway continues twin + file capture. No reconne
 { "type": "event", "stream": "diagnostic", "record": { /* schema v2 diagnostic DTO */ } }
 { "type": "event", "stream": "ledger", "record": { /* schema v2 ledger DTO */ } }
 ```
+
+There is **no** `run_started` / `run_id` / `run_dir` on the live wire. Archive identity stays on
+Gateway (`RunWriter` + stderr). Enhancing the Dashboard to open a given run directory and
+replay is a **future** feature (Phase 8), not Phase 6.
 
 Unknown `type` → Dashboard logs and skips (forward-compatible). No `Display`/prose on the wire.
 
@@ -197,8 +190,8 @@ Gateway removes a stale socket path when safe to bind; best-effort unlink on cle
 2. **If `--uds`:** bind; print waiting message; accept one client or exit on connect-timeout;
    send `hello`. **If no `--uds`:** skip live bind (headless).
 3. `install_controller` → boot diagnostic.
-4. Tee waits for boot → `RunWriter::create` → if live client present, send `run_started` →
-   persist boot to file and (when present) UDS.
+4. Tee waits for boot → `RunWriter::create` (print run dir on stderr) → persist boot to file
+   and (when present) UDS as the first diagnostic event.
 5. `spawn_runtime` (CAN ingress / actuation workers).
 6. Tee loop: `select!` on both receivers → convert once → file + optional `LiveSink`.
 7. Client disconnect: stop live emits; keep twin + archive until Gateway process exits.
@@ -209,7 +202,7 @@ Gateway removes a stale socket path when safe to bind; best-effort unlink on cle
 2. On `hello`: update **bottom pane / keys footer** so the human observer sees that the
    Dashboard has **connected to the twin** (not only a log line). Example intent:
    `Connected to twin via <uds-path>` (exact copy flexible).
-3. Wait for `run_started` and boot diagnostic (short timeout); then enter TUI loop.
+3. Wait for boot diagnostic event (short timeout); then enter / continue TUI loop.
 4. Apply-before-display from `LiveSource`.
 5. If the socket closes later: show disconnected status in the same bottom pane; do not
    reconnect. Twin may still be running.
@@ -232,7 +225,7 @@ vcan0 → actuators → gateway (waits on accept) → dashboard (connects) → e
 | Capture (`RunWriter`) failure | Fail Gateway (trustworthy archive) |
 | UDS write after client disconnect | Stop live emits; continue file capture |
 | Corrupt / unknown JSON line (Dashboard) | Skip + log; keep TUI alive |
-| Boot / `run_started` timeout (Dashboard) | Clear error; exit before or without misleading UI |
+| Boot diagnostic timeout (Dashboard) | Clear error; exit before or without misleading UI |
 
 ---
 
