@@ -6,7 +6,8 @@ pub mod speed;
 
 pub use ambient_road_light::AmbientRoadLightModel;
 pub use config::{
-    AmbientRoadLightModelConfig, PhysicalWorldModelConfig, RainModelConfig, RpmModelConfig,
+    AmbientRoadLightModelConfig, DAYTIME_TUNNEL_HIGH_TARGET_RPM, DAYTIME_TUNNEL_LOW_TARGET_RPM,
+    DAYTIME_TUNNEL_RPM_CEILING, PhysicalWorldModelConfig, RainModelConfig, RpmModelConfig,
     SpeedModelConfig,
 };
 pub use rain::RainModel;

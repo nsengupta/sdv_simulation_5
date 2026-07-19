@@ -246,7 +246,11 @@ async fn scenario_log_warning_is_routed_to_diagnostic_sink() {
     while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(250), diag_rx.recv()).await
     {
         if msg.level == crate::DiagnosticLevel::Warning
-            && msg.message.contains(crate::SPEED_THRESHOLD_WARNING_MESSAGE)
+            && matches!(
+                &msg.kind,
+                crate::DiagnosticKind::Text { text }
+                    if text.contains(crate::SPEED_THRESHOLD_WARNING_MESSAGE)
+            )
         {
             saw_warning = true;
             break;
@@ -340,18 +344,32 @@ async fn scenario_actuation_ack_surfaces_confirmation_on_diagnostic_sink() {
         .await
         .expect("inject matching ON ack");
 
-    let mut saw_confirmation = false;
+    // Happy-path ACK is zone/context only — must not appear on the diagnostic stream.
     while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(250), diag_rx.recv()).await
     {
-        if msg.level == crate::DiagnosticLevel::Info && msg.message.contains(crate::MSG_ACK_ON) {
-            saw_confirmation = true;
-            break;
+        assert!(
+            !matches!(
+                msg.kind,
+                crate::DiagnosticKind::HeadlampActuationUnconfirmed { .. }
+            ),
+            "positive ACK must not emit HeadlampActuationUnconfirmed: {msg:?}"
+        );
+        if let crate::DiagnosticKind::Text { text } = &msg.kind {
+            assert!(
+                !text.contains(crate::MSG_ACK_ON),
+                "positive ACK must not emit confirmation prose: {text}"
+            );
         }
     }
 
-    assert!(
-        saw_confirmation,
-        "a positive headlamp ACK should surface as an Info-level confirmation diagnostic"
+    let snap = controller
+        .get_snapshot(Some(Duration::from_secs(1)))
+        .await
+        .expect("status after ON ack");
+    assert_eq!(
+        snap.context().headlamp.state,
+        crate::vehicle_state::HeadlampState::On,
+        "positive ACK should settle headlamp zone to On"
     );
 }
 

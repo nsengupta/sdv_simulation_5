@@ -27,7 +27,9 @@ pub use crate::vehicle_state::WiperState;
 // --- Observation / optional runtime wiring ---
 
 pub use crate::observation_records::diagnostic::sink::spawn_stdout_diagnostic_observer;
-pub use crate::observation_records::diagnostic::{DiagnosticLevel, DiagnosticRecord};
+pub use crate::observation_records::diagnostic::{
+    DiagnosticKind, DiagnosticLevel, DiagnosticRecord,
+};
 pub use crate::observation_records::transition::{
     PublishedDomainAction, PublishedFrontHeadlampIncompleteCause,
     PublishedFrontHeadlampSwitchDirection, PublishedFsmEvent, PublishedFsmState,

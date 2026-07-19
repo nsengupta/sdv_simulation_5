@@ -18,7 +18,9 @@ use std::time::{Duration, Instant};
 /// - Idle + UpdateRpm(rpm > [`RPM_DRIVING_THRESHOLD`]) -> Driving
 /// - Driving + derived ctx.powertrain.speed_kph == 0 -> Idle (any event, after kinematic refresh in `step`)
 /// - Driving + speed > 160 km/h **or** (speed > 160 and RPM > 5500) -> ExtremeOperationWarning(now)
-/// - ExtremeOperationWarning + TimerTick + cooldown + all signals cleared -> Driving/Idle
+/// - ExtremeOperationWarning + stationary (speed 0): PowerOff -> PreparingToStop; any other event -> Idle
+///   (abrupt standstill waives the cooldown — emulator trailer / hard stop)
+/// - ExtremeOperationWarning + TimerTick + cooldown + warning cleared (still rolling) -> Driving/Idle
 /// - PreparingToStop({a, ...}) + AssemblyZoneReady(a) -> PreparingToStop({...}) or Off (when set empties)
 /// - PreparingToStop + anything else -> PreparingToStop (self-loop, set unchanged)
 /// - Everything else -> stay in current state
@@ -151,21 +153,26 @@ pub fn transition(
             },
         },
         ExtremeOperationWarning(began_at) => match event {
-            TimerTick if operational_warning_recovery_ready(*began_at, now, current_ctx) => {
-                let next_state = if current_ctx.powertrain.is_stationary() {
-                    Idle
-                } else {
-                    Driving
-                };
-                TransitionResult {
-                    next_state,
-                    note: None,
-                }
-            }
+            // Abrupt standstill (e.g. EngineRpm(0) trailer): waive cooldown.
+            PowerOff if current_ctx.powertrain.is_stationary() => TransitionResult {
+                next_state: PreparingToStop(ALL_ASSEMBLIES.iter().copied().collect()),
+                note: None,
+            },
             PowerOff => TransitionResult {
                 next_state: ExtremeOperationWarning(*began_at),
                 note: Some(TransitionNote::RejectedPowerOff),
             },
+            _ if current_ctx.powertrain.is_stationary() => TransitionResult {
+                next_state: Idle,
+                note: None,
+            },
+            // Gradual clear while still rolling: TimerTick + cooldown + thresholds cleared.
+            TimerTick if operational_warning_recovery_ready(*began_at, now, current_ctx) => {
+                TransitionResult {
+                    next_state: Driving,
+                    note: None,
+                }
+            }
             _ => TransitionResult {
                 next_state: ExtremeOperationWarning(*began_at),
                 note: None,
@@ -217,6 +224,10 @@ pub fn output(old_state: &FsmState, new_state: &FsmState, ctx: &VehicleContext) 
     match (old_state, new_state) {
         (Off, PreparingToStart(_)) => vec![StartAssemblies(ALL_ASSEMBLIES.to_vec())],
         (Idle, PreparingToStop(_)) => vec![StopAssemblies(ALL_ASSEMBLIES.to_vec())],
+        (ExtremeOperationWarning(_), PreparingToStop(_)) => vec![
+            StopBuzzer,
+            StopAssemblies(ALL_ASSEMBLIES.to_vec()),
+        ],
         // Intra-mode steps: an assembly acknowledged but peers are still pending.
         // The FSM is still in the same mode; no domain event to publish.
         (PreparingToStart(_), PreparingToStart(_)) => vec![],

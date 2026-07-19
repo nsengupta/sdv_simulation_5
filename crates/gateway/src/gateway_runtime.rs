@@ -77,6 +77,9 @@ pub struct TwinRuntimeBuilder {
     headlamp_policy: Arc<Mutex<FrontHeadlampPolicy>>,
     /// When true (default), `spawn_runtime` sends `PowerOn` after install. Dashboard sets false.
     auto_power_on: bool,
+    /// When true, format headlamp ACK/NACK ingress lines to stdout. Default false so an
+    /// in-process Dashboard TTY is not corrupted. Standalone gateway enables this.
+    ingress_console_log: bool,
     /// Created internally by [`install_controller`]; consumed by [`spawn_runtime`].
     actuation_cmd_rx: Option<mpsc::Receiver<ActuationCommand>>,
 }
@@ -92,6 +95,7 @@ impl TwinRuntimeBuilder {
             transition_tx: None,
             headlamp_policy: Arc::new(Mutex::new(FrontHeadlampPolicy::default())),
             auto_power_on: true,
+            ingress_console_log: false,
             actuation_cmd_rx: None,
         }
     }
@@ -136,6 +140,17 @@ impl TwinRuntimeBuilder {
     /// Whether [`Self::spawn_runtime`] will auto-send `PowerOn`.
     pub(crate) fn auto_power_on(&self) -> bool {
         self.auto_power_on
+    }
+
+    /// Enable formatted headlamp ACK/NACK `println!` lines (standalone gateway console only).
+    pub fn with_ingress_console_log(mut self, enabled: bool) -> Self {
+        self.ingress_console_log = enabled;
+        self
+    }
+
+    /// Whether ingress ACK lines are printed to stdout.
+    pub fn ingress_console_log(&self) -> bool {
+        self.ingress_console_log
     }
 
     /// Attach a stdout diagnostic observer for the given receiver.
@@ -204,19 +219,22 @@ impl TwinRuntimeBuilder {
         let headlamp_policy = self.headlamp_policy.clone();
         let trace_actuation_ingress = self.trace_actuation_ingress;
         let auto_power_on = self.auto_power_on();
+        let ingress_console_log = self.ingress_console_log;
         let actuation_cmd_rx = self.actuation_cmd_rx.take().ok_or_else(|| {
             anyhow::anyhow!("install_controller must be called before spawn_runtime")
         })?;
 
-        // Off-hot-path ingress logger: a frozen console must not block ACK delivery to the twin.
-        let ingress_log_tx = {
+        // Off-hot-path ingress logger (opt-in): never println into a Dashboard-owned TTY.
+        let ingress_log_tx = if ingress_console_log {
             let (tx, mut rx) = mpsc::channel::<String>(INGRESS_LOG_CHANNEL_CAPACITY);
             tokio::spawn(async move {
                 while let Some(line) = rx.recv().await {
                     println!("{line}");
                 }
             });
-            tx
+            Some(tx)
+        } else {
+            None
         };
 
         // Actuation command publishers (fan-out to headlamp + wiper)
@@ -235,12 +253,13 @@ impl TwinRuntimeBuilder {
             can_tx,
         )?;
 
-        // Print startup banners
-        println!("⚡ Gateway on {can_interface} — CAN → TwinIngressEvent → VehicleController");
-        println!(
-            "[gateway] front-headlamp + wiper CMD egress on CAN; \
-             run `cargo run -p front_headlamp_actuator` and `cargo run -p wiper_actuator`"
-        );
+        if ingress_console_log {
+            println!("⚡ Gateway on {can_interface} — CAN → TwinIngressEvent → VehicleController");
+            println!(
+                "[gateway] front-headlamp + wiper CMD egress on CAN; \
+                 run `cargo run -p front_headlamp_actuator` and `cargo run -p wiper_actuator`"
+            );
+        }
 
         if auto_power_on {
             let c = controller.clone();
@@ -478,7 +497,7 @@ fn format_front_headlamp_ingress(
 async fn run_can_ingress_dispatch_loop(
     controller: VehicleController,
     mut rx: mpsc::UnboundedReceiver<CanIngressEnvelope>,
-    ingress_log_tx: mpsc::Sender<String>,
+    ingress_log_tx: Option<mpsc::Sender<String>>,
 ) -> Result<()> {
     while let Some(msg) = rx.recv().await {
         match msg {
@@ -498,8 +517,8 @@ async fn run_can_ingress_dispatch_loop(
                     .submit_twin_ingress(twin_ingress)
                     .await
                     .map_err(|e| anyhow::anyhow!("submit twin ingress: {e:?}"))?;
-                if let Some(line) = line {
-                    let _ = ingress_log_tx.try_send(line);
+                if let (Some(tx), Some(line)) = (ingress_log_tx.as_ref(), line) {
+                    let _ = tx.try_send(line);
                 }
             }
         }
@@ -548,6 +567,18 @@ mod tests {
     async fn builder_with_auto_power_on_false() {
         let builder = TwinRuntimeBuilder::new().with_auto_power_on(false);
         assert!(!builder.auto_power_on());
+    }
+
+    #[tokio::test]
+    async fn ingress_console_log_defaults_false() {
+        let builder = TwinRuntimeBuilder::new();
+        assert!(!builder.ingress_console_log());
+    }
+
+    #[tokio::test]
+    async fn ingress_console_log_can_be_enabled() {
+        let builder = TwinRuntimeBuilder::new().with_ingress_console_log(true);
+        assert!(builder.ingress_console_log());
     }
 
     #[tokio::test]

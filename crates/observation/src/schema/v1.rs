@@ -14,12 +14,13 @@ use time::{OffsetDateTime, UtcOffset};
 use uuid::Uuid;
 
 use common::facade::{
-    DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
+    DiagnosticKind, DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
     PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
     PublishedHealthContext, PublishedOperational, PublishedPowertrainContext,
     PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext, UnixTimestamp,
 };
+use common::fsm::FrontHeadlampIncompleteCause;
 
 use crate::ObservationError;
 use crate::schema::CURRENT_SCHEMA_VERSION;
@@ -310,10 +311,27 @@ pub enum DiagnosticLevelV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DiagnosticKindV1 {
+    Text { text: String },
+    Boot,
+    TimerTick,
+    HeadlampActuationUnconfirmed {
+        on: bool,
+        cause: FrontHeadlampIncompleteCauseV1,
+    },
+    RainChanged { raining: bool },
+    WiperMotionChanged { wiping: bool },
+    ActuationFailure { action: String, error: String },
+    TransitionSinkFull,
+    TransitionSinkClosed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticPayloadV1 {
     pub level: DiagnosticLevelV1,
     pub source: String,
-    pub message: String,
+    pub kind: DiagnosticKindV1,
     pub session_started_at: UnixTimestampV1,
 }
 
@@ -414,7 +432,7 @@ pub fn diagnostic_envelope(
     let payload = DiagnosticPayloadV1 {
         level: project_diagnostic_level(record.level),
         source: record.source.to_string(),
-        message: record.message.clone(),
+        kind: project_diagnostic_kind(&record.kind),
         session_started_at,
     };
     Ok(StreamEnvelopeV1 {
@@ -465,6 +483,45 @@ pub fn ledger_envelope(
         recorded_at: UnixTimestampV1::from_live(record.recorded_at),
         payload,
     })
+}
+
+fn project_diagnostic_kind(kind: &DiagnosticKind) -> DiagnosticKindV1 {
+    match kind {
+        DiagnosticKind::Text { text } => DiagnosticKindV1::Text {
+            text: text.clone(),
+        },
+        DiagnosticKind::Boot => DiagnosticKindV1::Boot,
+        DiagnosticKind::TimerTick => DiagnosticKindV1::TimerTick,
+        DiagnosticKind::HeadlampActuationUnconfirmed { on, cause } => {
+            DiagnosticKindV1::HeadlampActuationUnconfirmed {
+                on: *on,
+                cause: project_live_incomplete_cause(*cause),
+            }
+        }
+        DiagnosticKind::RainChanged { raining } => DiagnosticKindV1::RainChanged {
+            raining: *raining,
+        },
+        DiagnosticKind::WiperMotionChanged { wiping } => DiagnosticKindV1::WiperMotionChanged {
+            wiping: *wiping,
+        },
+        DiagnosticKind::ActuationFailure { action, error } => DiagnosticKindV1::ActuationFailure {
+            action: action.clone(),
+            error: error.clone(),
+        },
+        DiagnosticKind::TransitionSinkFull => DiagnosticKindV1::TransitionSinkFull,
+        DiagnosticKind::TransitionSinkClosed => DiagnosticKindV1::TransitionSinkClosed,
+    }
+}
+
+fn project_live_incomplete_cause(
+    cause: FrontHeadlampIncompleteCause,
+) -> FrontHeadlampIncompleteCauseV1 {
+    match cause {
+        FrontHeadlampIncompleteCause::TimedOut => FrontHeadlampIncompleteCauseV1::TimedOut,
+        FrontHeadlampIncompleteCause::NegativeAck => FrontHeadlampIncompleteCauseV1::NegativeAck,
+        // `FrontHeadlampIncompleteCause` is `#[non_exhaustive]` for forward-compat.
+        _ => FrontHeadlampIncompleteCauseV1::TimedOut,
+    }
 }
 
 fn project_diagnostic_level(level: DiagnosticLevel) -> DiagnosticLevelV1 {

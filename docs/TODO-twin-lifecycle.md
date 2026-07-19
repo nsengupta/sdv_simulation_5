@@ -190,6 +190,6 @@ TL-8 parallel anytime after TL-1
 | Emulator echo / CSV | [`PHASES.md` Phase 2](PHASES.md#phase-2--emulator-scenario-runner-echo--generate) |
 | Observation files + replay | [`PHASES.md` Phases 3, 7](PHASES.md) |
 | Engineer ledger heartbeat | `DESIGN.md` §15.5 |
-| Gateway process split | [`PHASES.md` Phase 5](PHASES.md#phase-5--split-gateway-and-dashboard-processes) |
+| Gateway process split | [`PHASES.md` Phase 6](PHASES.md#phase-6--split-gateway-and-dashboard-processes) |
 | TL-6 / TL-7 / TL-8 | [`PHASES.md` Phase 9](PHASES.md#phase-9--shutdown-disband-polish-later) |
 | Target architecture overview | [`ARCHITECTURE-OVERVIEW.md`](ARCHITECTURE-OVERVIEW.md) |

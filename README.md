@@ -475,7 +475,7 @@ The reference application is **one process, one `main()`**, with two cooperating
 
 Full design: [`DESIGN.md` §16](DESIGN.md#16-twin-lifecycle-install--start--operate--stop--disband). Architecture overview: [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased roadmap: [`docs/PHASES.md`](docs/PHASES.md). Checklist: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md).
 
-> **Note:** The combined `tui_dashboard` app (twin in-process) is **transitional** until [Phase 5](docs/PHASES.md#phase-5--split-gateway-and-dashboard-processes). The target is separate Gateway, Dashboard, Emulator, and actuator processes on CAN.
+> **Note:** The combined `tui_dashboard` app (twin in-process) is **transitional** until [Phase 6](docs/PHASES.md#phase-6--split-gateway-and-dashboard-processes). Phase 5 reworks Dashboard presentation first. The target remains separate Gateway, Dashboard, Emulator, and actuator processes on CAN.
 
 ### Setup (before the UI loop)
 
@@ -668,5 +668,5 @@ Detail: [`docs/design-documents.md`](docs/design-documents.md)
 
 Known gaps carried forward: CSV scenario/echo support (deferred), non-blocking actuation
 (child actor), HeadlampActor isolation tests, `ActuationIncomplete(Off)` coverage,
-explicit shutdown/disband on dashboard quit (**Phase 9** / TL-6, deferred until CAN E2E gate).
+explicit shutdown/disband on dashboard quit (**Phase 10** / TL-6, deferred until CAN E2E gate).
 Twin lifecycle status: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) (TL-0–TL-5 done; TL-6+ pending).

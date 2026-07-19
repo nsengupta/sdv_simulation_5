@@ -11,10 +11,15 @@ use crate::test::{
     expect_actuation_command, install_with_actuation, power_on_to_idle,
     wiper_zone_contract::wait_wiper_state,
 };
+use crate::DiagnosticKind;
+use crate::test::ActorGuard;
 use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
 use crate::twin_runtime::controller::actuation_manager::{
     ActuationManager, DefaultActuationManager,
 };
+use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
+use crate::VehicleController;
+use tokio::sync::mpsc;
 use crate::twin_runtime::outcome_map::zone_outcomes_to_domain_actions;
 use crate::twin_runtime::zone_turn::ZoneOutcome;
 use crate::vehicle_state::WiperOutcome;
@@ -137,4 +142,71 @@ async fn given_wiper_running_when_rain_detected_false_ingress_then_ready_and_sto
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     let cmd = expect_actuation_command(&mut actuation_rx, Duration::from_secs(1)).await;
     assert!(matches!(cmd, ActuationCommand::StopWiper), "got {cmd:?}");
+}
+
+#[tokio::test]
+async fn given_rain_ingress_when_wiper_runs_then_diagnostics_prove_rain_wiper_coupling() {
+    let (diag_tx, mut diag_rx) = mpsc::unbounded_channel();
+    let (actuation_tx, mut actuation_rx) = mpsc::channel(8);
+    let runtime_options = VehicleControllerRuntimeOptions {
+        diagnostic_tx: Some(diag_tx),
+        actuation_command_tx: Some(actuation_tx),
+        ..Default::default()
+    };
+    let (controller, handle) = VehicleController::install_and_start_with_options(
+        "WIPER-DIAG-RAIN".to_string(),
+        runtime_options,
+    )
+    .await
+    .expect("install");
+    let _guard = ActorGuard {
+        addr: controller.get_actor_ref().clone(),
+        handle,
+    };
+
+    power_on_to_idle(&controller).await;
+    wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
+    while diag_rx.try_recv().is_ok() {}
+
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::RainDetected(true)))
+        .await
+        .expect("rain");
+    wait_wiper_state(&controller, WiperState::Running, Duration::from_millis(500)).await;
+    let _ = expect_actuation_command(&mut actuation_rx, Duration::from_secs(1)).await;
+
+    let mut saw_rain = false;
+    let mut saw_wiper = false;
+    while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(200), diag_rx.recv()).await
+    {
+        match msg.kind {
+            DiagnosticKind::RainChanged { raining: true } => saw_rain = true,
+            DiagnosticKind::WiperMotionChanged { wiping: true } => saw_wiper = true,
+            _ => {}
+        }
+    }
+    assert!(saw_rain, "expected RainChanged {{ raining: true }}");
+    assert!(saw_wiper, "expected WiperMotionChanged {{ wiping: true }}");
+
+    controller
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::RainDetected(false)))
+        .await
+        .expect("rain stop");
+    wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
+
+    let mut saw_rain_off = false;
+    let mut saw_wiper_off = false;
+    while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(200), diag_rx.recv()).await
+    {
+        match msg.kind {
+            DiagnosticKind::RainChanged { raining: false } => saw_rain_off = true,
+            DiagnosticKind::WiperMotionChanged { wiping: false } => saw_wiper_off = true,
+            _ => {}
+        }
+    }
+    assert!(saw_rain_off, "expected RainChanged {{ raining: false }}");
+    assert!(
+        saw_wiper_off,
+        "expected WiperMotionChanged {{ wiping: false }}"
+    );
 }

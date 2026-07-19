@@ -1,6 +1,13 @@
-use common::domain_types::{
-    RPM_EXTREME_OPERATION_THRESHOLD, RPM_IDLE, RPM_REDLINE_THRESHOLD,
-};
+use common::domain_types::{RPM_EXTREME_OPERATION_THRESHOLD, RPM_IDLE};
+
+/// Profile RPM hard clamp: Twin derives `speed ≈ rpm * 0.114`, so 1580 → ~180 km/h peak.
+pub const DAYTIME_TUNNEL_RPM_CEILING: u16 = 1580;
+
+/// High RPM target for daytime-tunnel: ~1550 × 0.114 ≈ 177 km/h (above 160 for ExtremeOperationWarning).
+pub const DAYTIME_TUNNEL_HIGH_TARGET_RPM: f32 = 1550.0;
+
+/// Low RPM target: ~1200 × 0.114 ≈ 137 km/h (cruise under the 160 km/h threshold).
+pub const DAYTIME_TUNNEL_LOW_TARGET_RPM: f32 = 1200.0;
 
 #[derive(Debug, Clone)]
 pub struct SpeedModelConfig {
@@ -52,20 +59,27 @@ pub struct PhysicalWorldModelConfig {
 }
 
 impl PhysicalWorldModelConfig {
+    /// Demo profile: Twin derives speed from EngineRpm (`kph ≈ rpm * 0.114`).
+    ///
+    /// RPM is banded so derived speed usually sits under the Twin speed threshold (160 km/h)
+    /// on the low target and briefly peaks ~165–180 km/h on the high target — enough for
+    /// ExtremeOperationWarning demos without runaway speeds. Lighting-driven
+    /// DrivingDangerously is unchanged.
     pub fn daytime_tunnel_profile() -> Self {
         Self {
             speed: SpeedModelConfig {
                 min_kph: 0.0,
-                max_kph: 160.0,
+                // Align with kinematic peak from [`DAYTIME_TUNNEL_RPM_CEILING`] (not yet on CAN).
+                max_kph: 180.0,
                 random_nudge_min: -0.5,
                 random_nudge_max: 0.6,
             },
             rpm: RpmModelConfig {
                 idle_rpm: RPM_IDLE,
                 extreme_operation_rpm: RPM_EXTREME_OPERATION_THRESHOLD,
-                redline_rpm: RPM_REDLINE_THRESHOLD,
-                high_target_rpm: 6500.0,
-                low_target_rpm: 1200.0,
+                redline_rpm: DAYTIME_TUNNEL_RPM_CEILING,
+                high_target_rpm: DAYTIME_TUNNEL_HIGH_TARGET_RPM,
+                low_target_rpm: DAYTIME_TUNNEL_LOW_TARGET_RPM,
                 target_flip_period_secs: 15,
                 proportional_gain: 0.1,
                 jitter_amplitude: 5.0,

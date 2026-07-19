@@ -57,15 +57,15 @@ Five **independently runnable** command-line applications share a message carrie
 | **Gateway** | Houses the **entire Digital Twin** (actor tree, FSM, zones, `SessionClock`). Reads driver/sensor ingress and publishes actuation. Emits **diagnostic** and **transition ledger** observation streams. |
 | **Emulator** | Sends lifecycle (`PowerOn`/`PowerOff`) and bounded-random sensor frames onto the bus. Today it requires `--readings N`, writes a finite `3N + 3` frame run, and exits. It does not know whether the twin accepts its inputs. CSV/echo is a deferred future option. |
 | **Actuators** | Separate processes per assembly (headlamp, wiper, …). Listen for CMD frames; respond only after receiving CMD. No spontaneous bus traffic. Future actuators follow the same pattern. |
-| **Dashboard** | Today, an **observer-only** TUI displaying twin-authored diagnostic and ledger output; it has no lifecycle keys. A future driver UI and embedded emulator component are deferred to Phase 6. It interacts with the twin for **observation only**, never direct FSM injection. |
+| **Dashboard** | Today, an **observer-only** TUI (Phase 5: driver / engineer / ledger-tail panes) displaying twin-authored diagnostic and ledger output; it has no lifecycle keys. Embedded emulator / driver controls are deferred to Phase 7. It interacts with the twin for **observation only**, never direct FSM injection. |
 
 ### 1.1 Message carrier (phased)
 
 | Carrier | When | Scope |
 |---------|------|--------|
 | **CAN (`vcan0`)** | Phases 1–7 | Emulator ↔ Gateway ↔ Actuators |
-| **File / simple IPC** | Phase 5–6 | Gateway observation → Dashboard (before Zenoh) |
-| **Zenoh + uProtocol** | Phase 8+ | Optional runtime config for all of the above |
+| **File / simple IPC** | Phase 6–7 | Gateway observation → Dashboard (before Zenoh) |
+| **Zenoh + uProtocol** | Phase 9+ | Optional runtime config for all of the above |
 
 All binaries that touch the bus today will later gain a **transport abstraction** (CAN vs Zenoh)
 selected by CLI / config. **No Zenoh until CAN path is defect-free.**
@@ -110,8 +110,9 @@ lifecycle-passive.
 | Dashboard ↔ Twin | Tokio MPSC channels in one `main()` | Observation over file/IPC → later Zenoh |
 | Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
 | Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
-| Observation capture | Phase 3 `observation` L6 adapter; Dashboard owns capture while the twin remains in-process | Versioned `manifest.json` plus `diagnostic.jsonl` and `ledger.jsonl`; Gateway assumes ownership in Phase 5 |
-| Replay | None | Phase 6 |
+| Observation capture | Phase 3 `observation` L6 adapter; Dashboard owns capture while the twin remains in-process | Versioned `manifest.json` plus `diagnostic.jsonl` and `ledger.jsonl`; Gateway assumes ownership in Phase 6 |
+| Dashboard presentation | Phase 5 driver / engineer / ledger-tail view over existing emissions | Honest gaps (`—`) until Twin fields are added |
+| Replay | None | Phase 8 |
 
 **Naming:** keep crate **`tui_dashboard`** for now. **`simulator`** is reserved for a possible future umbrella binary name.
 
@@ -125,7 +126,7 @@ lifecycle-passive.
 | G2 | **Closed:** silent ignore while `Off` enforced at the twin FSM boundary | **1** |
 | G3 | **Closed:** finite emulator sends full lifecycle and telemetry on CAN | **2** |
 | G4 | CSV/echo / Mode 2 file `TelemetrySource` deferred (seam exists; reader TODO) | Future / post–Phase 4 |
-| G5 | Twin co-located with dashboard | **5** |
+| G5 | Twin co-located with dashboard (process split deferred until Phase 5 proves emissions) | **6** |
 | G6 | **Closed:** versioned, human-readable observation artifacts written by the L6 `observation` adapter | **3** |
 | G7 | No E2E observation golden / `observation-compare` yet (Phase 4 delivered emulator session; golden remains TODO) | Later |
 | G8 | Dashboard cannot drive embedded emulator from TUI | **6** |
@@ -164,7 +165,7 @@ During the transitional combined application, `tui_dashboard` is both the live-s
 and capture owner. It writes every consumed diagnostic and ledger record before retaining that
 record as the UI's latest state. Each run has a versioned `manifest.json` and separate
 `diagnostic.jsonl` and `ledger.jsonl` streams beneath a UUID run directory. This ownership moves
-to Gateway with the Phase 5 process split without changing the file contract. See the
+to Gateway with the Phase 6 process split without changing the file contract. See the
 [Phase 3 design specification](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md)
 for schema, reader, and durability details.
 
@@ -185,7 +186,8 @@ for schema, reader, and durability details.
 | 2026-07-16 | `VirtualCarActor` silently drops every non-PowerOn FSM event while `Off`. |
 | 2026-07-16 | Phase 2 uses a required finite `--readings N`; CSV/echo is deferred. |
 | 2026-07-16 | Dashboard lifecycle keys were removed; it observes twin-authored outcomes only. |
-| 2026-07-17 | Phase 3 stores a separate `manifest.json`, `diagnostic.jsonl`, and `ledger.jsonl`; production run IDs are UUID v4 while tests inject deterministic IDs; transitional Dashboard capture ownership moves to Gateway in Phase 5. |
+| 2026-07-17 | Phase 3 stores a separate `manifest.json`, `diagnostic.jsonl`, and `ledger.jsonl`; production run IDs are UUID v4 while tests inject deterministic IDs; transitional Dashboard capture ownership moves to Gateway in Phase 6. |
+| 2026-07-18 | Phase 5 reworks Dashboard presentation (driver/engineer/ledger tail); Gateway↔Dashboard split deferred to Phase 6. |
 | 2026-07-18 | Twin-authored wall times use a live `UnixTimestamp` (`Duration` since Unix Epoch). Schema v1 stores `{unix_seconds,nanosecond}` objects; summary/UI presentation is `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`. Manifest keeps capture `created_at` and Twin `session_started_at`; Dashboard requires the boot diagnostic before creating a run. |
 
 ---

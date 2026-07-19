@@ -64,7 +64,7 @@ async fn given_twin_boot_when_both_sinks_wired_then_ledger_and_diagnostic_share_
     let diagnostics = drain_diagnostics(&mut diag_rx, Duration::from_millis(100)).await;
     assert!(
         !diagnostics.is_empty(),
-        "expected at least init and state diagnostics"
+        "expected at least boot diagnostic"
     );
 
     let session = ledger_rows[0].session_started_at;

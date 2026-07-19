@@ -21,7 +21,8 @@ async fn main() -> Result<()> {
 
     let mut builder = gateway_runtime::TwinRuntimeBuilder::new()
         .with_car_identity(VIRTUAL_CAR_IDENTITY)
-        .with_can_interface(gateway_runtime::DEFAULT_CAN_INTERFACE);
+        .with_can_interface(gateway_runtime::DEFAULT_CAN_INTERFACE)
+        .with_ingress_console_log(true);
 
     if trace_actuation_ingress && !print_transitions_only {
         builder = builder.with_actuation_ingress_trace();

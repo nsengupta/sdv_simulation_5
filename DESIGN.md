@@ -664,14 +664,14 @@ Dashboard **embeds Emulator core** for CSV echo or TUI driver controls. Overview
 
 **Transitional (today):** **`tui_dashboard`** = one process, one `main()` — twin installed
 in-process via `TwinRuntimeBuilder` + dashboard UI. This is **Phase 0 debt** until
-[`PHASES.md` Phase 5](docs/PHASES.md#phase-5--split-gateway-and-dashboard-processes).
+[`PHASES.md` Phase 6](docs/PHASES.md#phase-6--split-gateway-and-dashboard-processes).
 The name **simulator** is reserved for a possible future umbrella binary.
 
 | Part | Target | Today (transitional) |
 |---|---|---|
 | **Digital Twin** | **`gateway` binary** only | In-process inside `tui_dashboard` |
-| **Dashboard** | Observation consumer + embedded emulator | Twin + UI in same process |
-| **Emulator** | Standalone or embedded in dashboard | Standalone `generate` only |
+| **Dashboard** | Observation consumer + embedded emulator | Twin + UI in same process (Phase 5 presentation rework) |
+| **Emulator** | Standalone or embedded in dashboard | Standalone Mode 1 session |
 | **Observation** | Versioned files + live link | Tokio MPSC in one process |
 
 **Setup call-tree** (before the dashboard loop):
@@ -684,7 +684,7 @@ The name **simulator** is reserved for a possible future umbrella binary.
 **Lifecycle (target):** **PowerOn** / **PowerOff** arrive on **CAN `0x100`** from the
 **Emulator** (CSV script or dashboard-embedded emulator / TUI driver buttons). The dashboard
 does **not** inject lifecycle into the twin mailbox directly. Headless gateway may still
-auto-`PowerOn` for CI. Dashboard **`s`/`o`** are **transitional** until Phase 5 process split.
+auto-`PowerOn` for CI. Dashboard lifecycle keys are removed; CAN / emulator drive PowerOn/PowerOff.
 
 Once **PowerOn** has been processed, the twin handles CAN ingress and emits **diagnostics**
 and **ledger** rows. The dashboard renders the latest of each — it does not poll snapshots,
@@ -735,17 +735,19 @@ Vehicle physics and actuation still flow **emulators + actuators → CAN → Gat
 
 Dashboard keys **`s`/`o`** exist **transitionally** in the combined app today.
 
-**Layout** (`tui_dashboard`):
+**Layout** (`tui_dashboard`, Phase 5 — see `assets/Dashboard-format.txt`):
 
 ```text
 ┌─ Session ─────────────────────────────────────────────────────┐
 │ Car: …  │  Twin T+: …  │  Session start  │  FSM: …  │  ledger │
 └───────────────────────────────────────────────────────────────┘
-┌─ Diagnostic ──────────────┬─ Transition ──────────────────────┐
-│ (latest twin diagnostic)  │ (latest twin ledger row)          │
-└───────────────────────────┴───────────────────────────────────┘
+┌─ Diagnostic/Telemetry ────┬─ State Transitions ───────────────┐
+│ (driver: notice, speed…)  │ (engineer: state, ROB —, …)       │
+├─ Deterministic Transition Ledger (live, tail −20) ────────────┤
+│ > [seq] event  old → next                                     │
+└───────────────────────────────────────────────────────────────┘
 ┌───────────────────────────────────────────────────────────────┐
-│ Keys: 'q' quit  ('s'/'o' transitional — prefer emulator CAN)  │
+│ Keys: 'q' quit                                                │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -787,8 +789,8 @@ traffic. See [`docs/PHASES.md` Phase 1](docs/PHASES.md#phase-1--can-lifecycle--s
 
 **Target:** Gateway process owns install, ingress workers, and observation export. Dashboard
 process owns UI + embedded emulator; **no** in-process twin. Inter-process observation uses
-file tail or simple IPC first ([`PHASES.md` Phase 5](docs/PHASES.md)); Zenoh/uProtocol is
-[`PHASES.md` Phase 8](docs/PHASES.md).
+file tail or simple IPC first ([`PHASES.md` Phase 6](docs/PHASES.md)); Zenoh/uProtocol is
+[`PHASES.md` Phase 9](docs/PHASES.md).
 
 `TwinRuntimeBuilder` (Gateway-side) separates:
 
@@ -798,9 +800,9 @@ file tail or simple IPC first ([`PHASES.md` Phase 5](docs/PHASES.md)); Zenoh/uPr
 
 **Observation capture:** human-readable diagnostic + ledger files with run-id and schema version
 ([`PHASES.md` Phase 3](docs/PHASES.md)). **Replay:** dashboard standalone from stored files
-([`PHASES.md` Phase 7](docs/PHASES.md)).
+([`PHASES.md` Phase 8](docs/PHASES.md)).
 
-**Disband on Stop** — [`PHASES.md` Phase 9](docs/PHASES.md) / [`TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) TL-6/7.
+**Disband on Stop** — [`PHASES.md` Phase 10](docs/PHASES.md) / [`TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) TL-6/7.
 
 ### 16.5 Gateway vs Dashboard
 

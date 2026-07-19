@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use common::facade::{
-    DiagnosticLevel, DiagnosticRecord, PublishedDomainAction, PublishedFsmEvent, PublishedFsmState,
-    PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
+    DiagnosticKind, DiagnosticLevel, DiagnosticRecord, PublishedDomainAction, PublishedFsmEvent,
+    PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
     PublishedPowertrainContext, PublishedTransitionRecord, PublishedVehicleContext,
     PublishedVisibilityContext, PublishedWheelRpm, UnixTimestamp,
 };
@@ -34,7 +34,9 @@ pub fn sample_diagnostic() -> DiagnosticRecord {
     DiagnosticRecord {
         level: DiagnosticLevel::Warning,
         source: "VirtualCarActor",
-        message: "fixed warning".into(),
+        kind: DiagnosticKind::Text {
+            text: "fixed warning".into(),
+        },
         session_started_at: ts(SESSION_SECONDS, 0),
         recorded_at: ts(SESSION_SECONDS + 1, 0),
     }

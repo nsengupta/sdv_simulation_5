@@ -1,6 +1,8 @@
 //! Unit tests for the FSM spec (`transition` / `output`).
 
-use crate::fsm::{AssemblyId, FsmAction, FsmEvent, FsmState, output, transition};
+use crate::fsm::{
+    AssemblyId, FsmAction, FsmEvent, FsmState, TransitionNote, output, transition,
+};
 use crate::vehicle_physics::{
     EXTREME_OPERATION_WARNING_MESSAGE, RPM_EXTREME_OPERATION_THRESHOLD,
     SPEED_EXTREME_OPERATION_THRESHOLD_KPH, SPEED_THRESHOLD_WARNING_MESSAGE,
@@ -219,14 +221,64 @@ fn test_warning_recovers_to_idle_when_stationary() {
     let warning = FsmState::ExtremeOperationWarning(base);
     let ctx = ctx_with_rpm(0);
 
+    // Standstill waives cooldown — no need to wait for TimerTick age.
     let recovered = transition(
         &warning,
         &FsmEvent::TimerTick,
         &ctx,
-        base + Duration::from_secs(6),
+        base + Duration::from_millis(1),
     );
     assert_eq!(recovered.next_state, FsmState::Idle);
 
     let actions = output(&warning, &recovered.next_state, &ctx);
     assert!(actions.contains(&FsmAction::StopBuzzer));
+}
+
+#[test]
+fn test_warning_update_rpm_zero_exits_immediately_to_idle() {
+    let base = Instant::now();
+    let warning = FsmState::ExtremeOperationWarning(base);
+    let ctx = ctx_with_rpm(0);
+
+    let recovered = transition(&warning, &FsmEvent::UpdateRpm(0), &ctx, base);
+    assert_eq!(
+        recovered.next_state,
+        FsmState::Idle,
+        "abrupt EngineRpm(0) must leave ExtremeOperationWarning without cooldown"
+    );
+    assert!(output(&warning, &recovered.next_state, &ctx).contains(&FsmAction::StopBuzzer));
+}
+
+#[test]
+fn test_warning_power_off_when_stationary_starts_shutdown() {
+    let base = Instant::now();
+    let warning = FsmState::ExtremeOperationWarning(base);
+    let ctx = ctx_with_rpm(0);
+
+    let next = transition(&warning, &FsmEvent::PowerOff, &ctx, base);
+    assert!(
+        matches!(next.next_state, FsmState::PreparingToStop(_)),
+        "got {:?}",
+        next.next_state
+    );
+    assert!(next.note.is_none());
+    let actions = output(&warning, &next.next_state, &ctx);
+    assert!(actions.contains(&FsmAction::StopBuzzer));
+    assert!(actions
+        .iter()
+        .any(|a| matches!(a, FsmAction::StopAssemblies(_))));
+}
+
+#[test]
+fn test_warning_power_off_while_moving_still_rejected() {
+    let base = Instant::now();
+    let warning = FsmState::ExtremeOperationWarning(base);
+    let ctx = ctx_with_rpm(3000);
+
+    let next = transition(&warning, &FsmEvent::PowerOff, &ctx, base);
+    assert!(matches!(
+        next.next_state,
+        FsmState::ExtremeOperationWarning(_)
+    ));
+    assert_eq!(next.note, Some(TransitionNote::RejectedPowerOff));
 }

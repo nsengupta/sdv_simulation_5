@@ -14,6 +14,11 @@ pub struct SessionConfig {
     pub max_readings: Option<NonZeroUsize>,
 }
 
+/// End-of-session trailer: abrupt RPM→0 then PowerOff.
+///
+/// TODO(emulator-ramp): accelerate/decelerate gradually for live ticks, Ctrl+C, and
+/// `--readings` alike. Until then the Twin FSM must accept abrupt standstill (see
+/// `ExtremeOperationWarning` recovery when `speed_kph == 0`).
 pub fn controlled_stop<S: FrameSink>(sink: &mut S) -> Result<()> {
     sink.write_frame(VssSignal::EngineRpm(0).to_can_frame()?)?;
     sink.write_frame(LifecycleCommand::PowerOff.to_can_frame()?)?;

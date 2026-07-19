@@ -8,6 +8,7 @@
 //! from this module rather than duplicating physics locally.
 
 pub mod constants;
+pub mod display;
 pub mod kinematics;
 
 pub use constants::{
@@ -17,4 +18,5 @@ pub use constants::{
     SPEED_EXTREME_OPERATION_THRESHOLD_KPH, SPEED_THRESHOLD_WARNING_MESSAGE,
     extreme_operation_active, operational_warning_active, speed_threshold_exceeded,
 };
+pub use display::format_speed_bar;
 pub use kinematics::calculate_speed_from_rpm;

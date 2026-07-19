@@ -37,15 +37,15 @@ pub use front_headlamp_log::{
 };
 pub use observation_records::diagnostic::sink::{
     DiagnosticSink, DiagnosticSinkError, TokioMpscDiagnosticSink, diag_actuation_failure,
-    diag_front_headlamp_confirmed, diag_state_transition, diag_timer_tick,
+    diag_boot, diag_headlamp_actuation_unconfirmed, diag_rain_changed, diag_timer_tick,
     diag_transition_sink_closed, diag_transition_sink_full, diag_warning,
-    spawn_stdout_diagnostic_observer,
+    diag_wiper_motion_changed, spawn_stdout_diagnostic_observer,
 };
 pub use observation_records::transition::sink::{
     TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
 };
 pub use observation_records::{
-    DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
+    DiagnosticKind, DiagnosticLevel, DiagnosticRecord, PublishedDomainAction,
     PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
     PublishedHealthContext, PublishedPowertrainContext, PublishedTransitionRecord,

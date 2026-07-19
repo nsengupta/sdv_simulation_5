@@ -55,3 +55,24 @@ fn given_warning_recovery_when_transition_to_driving_then_stops_buzzer() {
     let actions = output(&old_state, &new_state, &ctx);
     assert_eq!(actions, vec![FsmAction::StopBuzzer]);
 }
+
+#[test]
+fn given_extreme_warning_when_headlamp_ack_and_stationary_then_idle() {
+    let now = Instant::now();
+    let warning = FsmState::ExtremeOperationWarning(now);
+    let mut ctx = valid_twin_context();
+    ctx.powertrain.apply_rpm(0);
+    ctx.powertrain.refresh_speed();
+
+    let result = transition(
+        &warning,
+        &FsmEvent::FrontHeadlampOffAck,
+        &ctx,
+        now,
+    );
+    assert_eq!(
+        result.next_state,
+        FsmState::Idle,
+        "standstill must exit ExtremeOperationWarning on any non-PowerOff event"
+    );
+}

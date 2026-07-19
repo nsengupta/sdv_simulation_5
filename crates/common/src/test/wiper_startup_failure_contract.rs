@@ -62,8 +62,11 @@ async fn given_silent_wiper_when_startup_tell_back_exhausted_then_warning_on_dia
     let messages = drain_diagnostics(&mut diag_rx, Duration::from_millis(50)).await;
 
     let has_wiper_warning = messages.iter().any(|m| {
-        m.message.to_lowercase().contains("wiper")
-            && m.level == crate::observation_records::diagnostic::DiagnosticLevel::Warning
+        m.level == crate::observation_records::diagnostic::DiagnosticLevel::Warning
+            && matches!(
+                &m.kind,
+                crate::DiagnosticKind::Text { text } if text.to_lowercase().contains("wiper")
+            )
     });
     assert!(
         has_wiper_warning,

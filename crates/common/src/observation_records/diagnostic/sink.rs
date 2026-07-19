@@ -1,13 +1,8 @@
 //! Diagnostic-record sink abstraction and domain helpers (L4-facing emission plumbing).
 
-use super::{DiagnosticLevel, DiagnosticRecord};
-use crate::front_headlamp_log::{ACK_OFF, ACK_ON, MSG_ACK_OFF, MSG_ACK_ON};
-use crate::fsm::{FrontHeadlampSwitchDirection, FsmState};
+use super::{DiagnosticLevel, DiagnosticKind, DiagnosticRecord};
+use crate::fsm::FrontHeadlampIncompleteCause;
 use crate::observation_records::transition::SessionClock;
-use crate::vehicle_physics::{
-    SPEED_EXTREME_OPERATION_THRESHOLD_KPH, extreme_operation_active, speed_threshold_exceeded,
-};
-use crate::vehicle_state::VehicleContext;
 use tokio::sync::mpsc;
 
 /// Abstract sink for diagnostic records emitted by the digital twin.
@@ -46,119 +41,73 @@ impl DiagnosticSink for TokioMpscDiagnosticSink {
     }
 }
 
-/// Human-readable transition line enriched with the post-transition powertrain context
-/// (speed / RPM) and a plain-language safety qualifier — meant for the diagnostic stream's
-/// operator audience, kept to a single compact line.
-pub fn diag_state_transition(
+const SOURCE: &str = "VirtualCarActor";
+
+pub fn diag_boot(clock: &SessionClock) -> DiagnosticRecord {
+    DiagnosticRecord::info(clock, SOURCE, DiagnosticKind::Boot)
+}
+
+pub fn diag_timer_tick(clock: &SessionClock) -> DiagnosticRecord {
+    DiagnosticRecord::info(clock, SOURCE, DiagnosticKind::TimerTick)
+}
+
+/// Twin concludes the actuator did not confirm the requested headlamp action.
+pub fn diag_headlamp_actuation_unconfirmed(
     clock: &SessionClock,
-    identity: &str,
-    new_state: &FsmState,
-    ctx: &VehicleContext,
+    on: bool,
+    cause: FrontHeadlampIncompleteCause,
 ) -> DiagnosticRecord {
-    let speed = ctx.powertrain.speed_kph;
-    let rpm = ctx.powertrain.primary_rpm();
-
-    let (label, detail) = match new_state {
-        FsmState::Off => ("Off", String::new()),
-        FsmState::Idle => ("Idle", format!(", speed = {speed} km/h, RPM = {rpm}")),
-        FsmState::Driving => {
-            let safety = if speed_threshold_exceeded(speed) {
-                format!("over the {SPEED_EXTREME_OPERATION_THRESHOLD_KPH} km/h limit")
-            } else {
-                "within safe limit".to_string()
-            };
-            (
-                "Driving",
-                format!(", speed = {speed} km/h, RPM = {rpm} ({safety})"),
-            )
-        }
-        FsmState::DrivingDangerously => (
-            "DrivingDangerously",
-            format!(", speed = {speed} km/h, RPM = {rpm}, lighting unsafe"),
-        ),
-        FsmState::ExtremeOperationWarning(_) => {
-            let cause = if extreme_operation_active(rpm, speed) {
-                "speed & RPM both extreme"
-            } else {
-                "speed over limit"
-            };
-            (
-                "ExtremeOperationWarning",
-                format!(", speed = {speed} km/h, RPM = {rpm} (EXCEEDS safe limit — {cause})"),
-            )
-        }
-        FsmState::PreparingToStart { .. } => ("PreparingToStart", String::new()),
-        FsmState::PreparingToStop { .. } => ("PreparingToStop", String::new()),
-    };
-
-    DiagnosticRecord::info(
+    DiagnosticRecord::warning(
         clock,
-        "VirtualCarActor",
-        format!("[{identity}]: Transitioned to {label}{detail}"),
+        SOURCE,
+        DiagnosticKind::HeadlampActuationUnconfirmed { on, cause },
     )
 }
 
-pub fn diag_timer_tick(clock: &SessionClock, identity: &str) -> DiagnosticRecord {
-    DiagnosticRecord::info(
-        clock,
-        "VirtualCarActor",
-        format!("[{identity}]: received heartbeat TimerTick"),
-    )
+pub fn diag_rain_changed(clock: &SessionClock, raining: bool) -> DiagnosticRecord {
+    DiagnosticRecord::info(clock, SOURCE, DiagnosticKind::RainChanged { raining })
+}
+
+pub fn diag_wiper_motion_changed(clock: &SessionClock, wiping: bool) -> DiagnosticRecord {
+    DiagnosticRecord::info(clock, SOURCE, DiagnosticKind::WiperMotionChanged { wiping })
 }
 
 pub fn diag_actuation_failure(
     clock: &SessionClock,
-    identity: &str,
     action: &str,
     err: &str,
 ) -> DiagnosticRecord {
     DiagnosticRecord::error(
         clock,
-        "VirtualCarActor",
-        format!("[{identity}]: actuation failure for {action}: {err}"),
+        SOURCE,
+        DiagnosticKind::ActuationFailure {
+            action: action.to_owned(),
+            error: err.to_owned(),
+        },
     )
 }
 
-/// Warning surfaced from a `DomainAction::LogWarning` intent emitted by the pure step.
-pub fn diag_warning(clock: &SessionClock, identity: &str, message: &str) -> DiagnosticRecord {
-    DiagnosticRecord::warning(clock, "VirtualCarActor", format!("[{identity}]: {message}"))
-}
-
-/// Info diagnostic surfaced when a front-headlamp command is **positively acknowledged**.
-pub fn diag_front_headlamp_confirmed(
-    clock: &SessionClock,
-    identity: &str,
-    direction: FrontHeadlampSwitchDirection,
-) -> DiagnosticRecord {
-    let (icon, msg) = match direction {
-        FrontHeadlampSwitchDirection::On => (ACK_ON, MSG_ACK_ON),
-        FrontHeadlampSwitchDirection::Off => (ACK_OFF, MSG_ACK_OFF),
-    };
-    DiagnosticRecord::info(
-        clock,
-        "VirtualCarActor",
-        format!("[{identity}]: {icon} {msg}"),
-    )
-}
-
-pub fn diag_transition_sink_full(clock: &SessionClock, identity: &str) -> DiagnosticRecord {
+/// Warning surfaced from a `DomainAction::LogWarning` intent (free-form until a stable kind exists).
+pub fn diag_warning(clock: &SessionClock, text: impl Into<String>) -> DiagnosticRecord {
     DiagnosticRecord::warning(
         clock,
-        "VirtualCarActor",
-        format!("[{identity}]: dropping transition record: sink full"),
+        SOURCE,
+        DiagnosticKind::Text {
+            text: text.into(),
+        },
     )
 }
 
-pub fn diag_transition_sink_closed(clock: &SessionClock, identity: &str) -> DiagnosticRecord {
-    DiagnosticRecord::warning(
-        clock,
-        "VirtualCarActor",
-        format!("[{identity}]: dropping transition record: sink closed"),
-    )
+pub fn diag_transition_sink_full(clock: &SessionClock) -> DiagnosticRecord {
+    DiagnosticRecord::warning(clock, SOURCE, DiagnosticKind::TransitionSinkFull)
+}
+
+pub fn diag_transition_sink_closed(clock: &SessionClock) -> DiagnosticRecord {
+    DiagnosticRecord::warning(clock, SOURCE, DiagnosticKind::TransitionSinkClosed)
 }
 
 /// Spawns a task that reads [`DiagnosticRecord`] values from `rx` and prints each
-/// to stdout (or stderr for error-level).
+/// to stdout (or stderr for error-level). Formatting is receiver-side via [`Display`].
 pub fn spawn_stdout_diagnostic_observer(
     mut rx: mpsc::UnboundedReceiver<DiagnosticRecord>,
 ) -> tokio::task::JoinHandle<()> {
@@ -175,4 +124,33 @@ pub fn spawn_stdout_diagnostic_observer(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fsm::FrontHeadlampIncompleteCause;
+    use crate::observation_records::transition::SessionClock;
+
+    #[test]
+    fn unconfirmed_helper_sets_kind() {
+        let clock = SessionClock::capture();
+        let rec = diag_headlamp_actuation_unconfirmed(
+            &clock,
+            true,
+            FrontHeadlampIncompleteCause::TimedOut,
+        );
+        assert_eq!(rec.level, DiagnosticLevel::Warning);
+        assert!(matches!(
+            rec.kind,
+            DiagnosticKind::HeadlampActuationUnconfirmed { on: true, .. }
+        ));
+    }
+
+    #[test]
+    fn timer_tick_helper_has_no_identity_prose() {
+        let clock = SessionClock::capture();
+        let rec = diag_timer_tick(&clock);
+        assert_eq!(rec.kind, DiagnosticKind::TimerTick);
+    }
 }

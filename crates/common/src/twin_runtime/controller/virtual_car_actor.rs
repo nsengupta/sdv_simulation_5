@@ -30,13 +30,15 @@ use std::time::Instant;
 
 use crate::digital_twin::{CarSnapshot, DigitalTwinCar, TwinMessage, ZoneMessage, ZoneReply};
 use crate::fsm::{
-    self, AssemblyId, DomainAction, FrontHeadlampSwitchDirection, FsmEvent, FsmState, HeadlampState,
+    self, AssemblyId, DomainAction, FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection,
+    FsmEvent, FsmState,
 };
-use crate::observation_records::diagnostic::DiagnosticRecord;
+use crate::vehicle_state::WiperState;
 use crate::observation_records::diagnostic::sink::{
-    DiagnosticSink, TokioMpscDiagnosticSink, diag_actuation_failure, diag_front_headlamp_confirmed,
-    diag_state_transition, diag_timer_tick, diag_transition_sink_closed, diag_transition_sink_full,
-    diag_warning,
+    DiagnosticSink, TokioMpscDiagnosticSink, diag_actuation_failure, diag_boot,
+    diag_headlamp_actuation_unconfirmed, diag_rain_changed, diag_timer_tick,
+    diag_transition_sink_closed, diag_transition_sink_full, diag_warning,
+    diag_wiper_motion_changed,
 };
 use crate::observation_records::transition::sink::{
     TokioMpscTransitionRecordSink, TransitionRecordSink, TransitionSinkError,
@@ -162,11 +164,7 @@ impl Actor for VirtualCarActor {
         let session_clock = SessionClock::capture();
 
         if let Some(sink) = &diagnostic_sink {
-            let _ = sink.try_emit(DiagnosticRecord::info(
-                &session_clock,
-                "VirtualCarActor",
-                format!("Physical Car name: {identity}, initializing its Digital Twin ..."),
-            ));
+            let _ = sink.try_emit(diag_boot(&session_clock));
         }
 
         let actuation_manager: Arc<dyn ActuationManager> =
@@ -230,10 +228,7 @@ impl Actor for VirtualCarActor {
                     && runtime_state.runtime_options.log_timer_tick
                 {
                     if let Some(sink) = &runtime_state.diagnostic_sink {
-                        let _ = sink.try_emit(diag_timer_tick(
-                            &runtime_state.session_clock,
-                            runtime_state.twin_car.identity(),
-                        ));
+                        let _ = sink.try_emit(diag_timer_tick(&runtime_state.session_clock));
                     }
                 }
                 let now = Instant::now();
@@ -584,10 +579,18 @@ impl VirtualCarActor {
         runtime_state: &mut VirtualCarRuntimeState,
         quiescent: crate::twin_runtime::twin_turn::QuiescentResult,
     ) -> Result<(), ActorProcessingErr> {
-        let old_state = runtime_state.twin_car.current_state().clone();
-        let headlamp_before = runtime_state.twin_car.context().headlamp.state;
+        let wiper_before = runtime_state.twin_car.context().wiper.state;
         let final_step = quiescent.final_step();
-        let headlamp_after = final_step.modified_ctx.headlamp.state;
+        let wiper_after = final_step.modified_ctx.wiper.state;
+
+        let headlamp_unconfirmed: Option<(bool, FrontHeadlampIncompleteCause)> =
+            quiescent.hops.iter().find_map(|hop| match &hop.event {
+                FsmEvent::FrontHeadlampActuationIncomplete { direction, cause } => Some((
+                    matches!(direction, FrontHeadlampSwitchDirection::On),
+                    *cause,
+                )),
+                _ => None,
+            });
 
         for hop in &quiescent.hops {
             let record_seq = runtime_state.next_record_seq;
@@ -604,14 +607,54 @@ impl VirtualCarActor {
             final_step.modified_ctx.clone(),
         );
 
+        if let Some(sink) = &runtime_state.diagnostic_sink {
+            for hop in &quiescent.hops {
+                match &hop.event {
+                    FsmEvent::RainsStarted => {
+                        let _ = sink.try_emit(diag_rain_changed(
+                            &runtime_state.session_clock,
+                            true,
+                        ));
+                    }
+                    FsmEvent::RainsStopped => {
+                        let _ = sink.try_emit(diag_rain_changed(
+                            &runtime_state.session_clock,
+                            false,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+
+            let wiping_before = matches!(wiper_before, WiperState::Running);
+            let wiping_after = matches!(wiper_after, WiperState::Running);
+            if wiping_before != wiping_after {
+                let _ = sink.try_emit(diag_wiper_motion_changed(
+                    &runtime_state.session_clock,
+                    wiping_after,
+                ));
+            }
+
+            if let Some((on, cause)) = headlamp_unconfirmed {
+                let _ = sink.try_emit(diag_headlamp_actuation_unconfirmed(
+                    &runtime_state.session_clock,
+                    on,
+                    cause,
+                ));
+            }
+        }
+
         for action in quiescent.merged_actions() {
             match action {
                 DomainAction::LogWarning(message) => {
+                    // Incomplete headlamp turns already emitted HeadlampActuationUnconfirmed.
+                    if headlamp_unconfirmed.is_some() {
+                        continue;
+                    }
                     if let Some(sink) = &runtime_state.diagnostic_sink {
                         let _ = sink.try_emit(diag_warning(
                             &runtime_state.session_clock,
-                            runtime_state.twin_car.identity(),
-                            &message,
+                            message,
                         ));
                     }
                 }
@@ -668,35 +711,12 @@ impl VirtualCarActor {
                         if let Some(sink) = &runtime_state.diagnostic_sink {
                             let _ = sink.try_emit(diag_actuation_failure(
                                 &runtime_state.session_clock,
-                                runtime_state.twin_car.identity(),
                                 &format!("{:?}", other_action),
                                 &format!("{:?}", err),
                             ));
                         }
                     }
                 }
-            }
-        }
-
-        if *runtime_state.twin_car.current_state() != old_state {
-            if let Some(sink) = &runtime_state.diagnostic_sink {
-                let _ = sink.try_emit(diag_state_transition(
-                    &runtime_state.session_clock,
-                    runtime_state.twin_car.identity(),
-                    runtime_state.twin_car.current_state(),
-                    runtime_state.twin_car.context(),
-                ));
-            }
-        }
-
-        if let Some(direction) = front_headlamp_confirmed_direction(headlamp_before, headlamp_after)
-        {
-            if let Some(sink) = &runtime_state.diagnostic_sink {
-                let _ = sink.try_emit(diag_front_headlamp_confirmed(
-                    &runtime_state.session_clock,
-                    runtime_state.twin_car.identity(),
-                    direction,
-                ));
             }
         }
 
@@ -726,7 +746,6 @@ impl VirtualCarActor {
                     if let Some(sink) = diag_sink {
                         let _ = sink.try_emit(diag_transition_sink_full(
                             &runtime_state.session_clock,
-                            runtime_state.twin_car.identity(),
                         ));
                     }
                 }
@@ -734,7 +753,6 @@ impl VirtualCarActor {
                     if let Some(sink) = diag_sink {
                         let _ = sink.try_emit(diag_transition_sink_closed(
                             &runtime_state.session_clock,
-                            runtime_state.twin_car.identity(),
                         ));
                     }
                 }
@@ -754,19 +772,5 @@ impl VirtualCarActor {
             .send(CarSnapshot::new(twin_car.clone(), as_of_seq))
             .map_err(|e| std::io::Error::other(format!("GetStatus reply: {e:?}")))?;
         Ok(())
-    }
-}
-
-/// Classify a headlamp state change as a positive ACK settle, if any.
-fn front_headlamp_confirmed_direction(
-    before: HeadlampState,
-    after: HeadlampState,
-) -> Option<FrontHeadlampSwitchDirection> {
-    match (before, after) {
-        (HeadlampState::OnRequested, HeadlampState::On) => Some(FrontHeadlampSwitchDirection::On),
-        (HeadlampState::OffRequested, HeadlampState::Ready) => {
-            Some(FrontHeadlampSwitchDirection::Off)
-        }
-        _ => None,
     }
 }

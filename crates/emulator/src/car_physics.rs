@@ -85,8 +85,12 @@ impl PhysicalCar {
 #[cfg(test)]
 mod tests {
     use super::PhysicalCar;
-    use common::domain_types::{RPM_IDLE, RPM_REDLINE_THRESHOLD};
-    use common::vehicle_physics::calculate_speed_from_rpm;
+    use crate::models::{
+        DAYTIME_TUNNEL_HIGH_TARGET_RPM, DAYTIME_TUNNEL_LOW_TARGET_RPM, DAYTIME_TUNNEL_RPM_CEILING,
+        PhysicalWorldModelConfig, RpmModel,
+    };
+    use common::domain_types::RPM_IDLE;
+    use common::vehicle_physics::{SPEED_EXTREME_OPERATION_THRESHOLD_KPH, calculate_speed_from_rpm};
 
     #[test]
     fn smoke_new_car_starts_at_idle_rpm() {
@@ -104,8 +108,60 @@ mod tests {
         for _ in 0..32 {
             car.update();
             assert_eq!(car.derived_speed_kph(), calculate_speed_from_rpm(car.rpm()));
-            assert!((RPM_IDLE..=RPM_REDLINE_THRESHOLD).contains(&car.rpm()));
+            assert!((RPM_IDLE..=DAYTIME_TUNNEL_RPM_CEILING).contains(&car.rpm()));
+            assert!(car.derived_speed_kph() <= 180.0);
             assert!((0..=1200).contains(&car.ambient_lux()));
         }
+    }
+
+    #[test]
+    fn high_target_derived_speed_peaks_above_threshold_within_180() {
+        let speed = calculate_speed_from_rpm(DAYTIME_TUNNEL_HIGH_TARGET_RPM as u16);
+        assert!(
+            speed > f64::from(SPEED_EXTREME_OPERATION_THRESHOLD_KPH),
+            "high target must exceed 160 km/h for ExtremeOperationWarning, got {speed}"
+        );
+        assert!(
+            speed <= 180.0,
+            "high target must stay within peak band, got {speed}"
+        );
+    }
+
+    #[test]
+    fn low_target_derived_speed_stays_at_or_under_threshold() {
+        let speed = calculate_speed_from_rpm(DAYTIME_TUNNEL_LOW_TARGET_RPM as u16);
+        assert!(
+            speed <= f64::from(SPEED_EXTREME_OPERATION_THRESHOLD_KPH),
+            "low target must cruise at or under 160 km/h, got {speed}"
+        );
+    }
+
+    #[test]
+    fn update_never_exceeds_profile_rpm_ceiling_or_180_kph() {
+        let mut car = PhysicalCar::new();
+        for _ in 0..200 {
+            car.update();
+            assert!(car.rpm() <= DAYTIME_TUNNEL_RPM_CEILING);
+            assert!(car.derived_speed_kph() <= 180.0);
+        }
+    }
+
+    #[test]
+    fn rpm_model_high_epoch_targets_peak_band() {
+        let cfg = PhysicalWorldModelConfig::daytime_tunnel_profile().rpm;
+        let model = RpmModel::new(cfg.clone());
+        // Even epoch bucket → high target (flip period 15).
+        let target = model.target_rpm_for_epoch(0);
+        assert!((target - DAYTIME_TUNNEL_HIGH_TARGET_RPM).abs() < f32::EPSILON);
+        let speed = calculate_speed_from_rpm(target as u16);
+        assert!(speed > f64::from(SPEED_EXTREME_OPERATION_THRESHOLD_KPH));
+        assert!(speed <= 180.0);
+
+        let low = model.target_rpm_for_epoch(cfg.target_flip_period_secs);
+        assert!((low - DAYTIME_TUNNEL_LOW_TARGET_RPM).abs() < f32::EPSILON);
+        assert!(
+            calculate_speed_from_rpm(low as u16)
+                <= f64::from(SPEED_EXTREME_OPERATION_THRESHOLD_KPH)
+        );
     }
 }

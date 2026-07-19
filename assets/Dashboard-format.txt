@@ -1,0 +1,25 @@
+
+Dashboard should look like this:
+
+
++------------------------------------+----------------------------------+
+| Session ... (as exists today, no change)                              |
++-Diagnostic/Telemetry---------------+-State Transitions----------------+
+|                                    |                                  |
+|  Speed: [|||||||||||.......] 2400  |  Current State: DRIVING          |
+|  Entering tunnel ->Lux: 150 (Low)  |  Active ROB Turns: 0             |
+|  Headlamps: [ ON | OFF | No Ack    |                                  |
+|                                    |                                  |
+|  Rain: Started | Stopped           |                                  |
+|  Wipers: [FAST ] (No ACK)          |  [Sub-Assemblies]                |
+|                                    |   - HeadlampActor: On            |
+|                                    |   - WiperActor:    Running       |
++--DETERMINISTIC TRANSITION LEDGER (LIVE STREAM) -----------------------+
+|                                                                       |
+|                                                                       |
+|  [Turn 104] Ingress: UpdateAmbientLux -> ROB Match -> State Commit    |
+|  [Turn 105] Ingress: RainsStarted    -> ROB Match -> State Commit     |
+|  > [Turn 106] Hop 1: LightingUnsafe -> Transitioning to Dangerously   |
++------------------------------------+----------------------------------+
+| Keys ...                                                              |
++------------------------------------+----------------------------------+

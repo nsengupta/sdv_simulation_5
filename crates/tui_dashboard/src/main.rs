@@ -8,6 +8,7 @@
 //! Vehicle operation (RPM, park, lighting, …) is CAN / emulator driven — not the dashboard.
 
 mod cli;
+mod view;
 
 use std::time::Duration;
 
@@ -20,9 +21,9 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use gateway::gateway_runtime::TwinRuntimeBuilder;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -30,7 +31,7 @@ use tokio::task::JoinHandle;
 use common::facade::{
     PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord, UnixTimestamp,
 };
-use common::DiagnosticRecord;
+use common::{DiagnosticKind, DiagnosticRecord};
 use common::PublishedDomainAction;
 use observation::{RunId, RunMetadata, RunWriter, UnixTimestampV1};
 
@@ -204,6 +205,7 @@ impl CaptureFinalizer for RunWriter {
 struct DashboardState {
     latest_diagnostic: Option<DiagnosticRecord>,
     latest_transition: Option<PublishedTransitionRecord>,
+    ledger_tail: view::LedgerTail,
 }
 
 fn handle_diagnostic(
@@ -212,7 +214,10 @@ fn handle_diagnostic(
     state: &mut DashboardState,
 ) -> Result<()> {
     capture.record_diagnostic(&record)?;
-    state.latest_diagnostic = Some(record);
+    // Capture every fact; Observer Notice filters noisy kinds (e.g. TimerTick).
+    if view::should_update_notice(&record.kind) {
+        state.latest_diagnostic = Some(record);
+    }
     Ok(())
 }
 
@@ -222,6 +227,7 @@ fn handle_ledger(
     state: &mut DashboardState,
 ) -> Result<()> {
     capture.record_ledger(&record)?;
+    state.ledger_tail.push(record.clone());
     state.latest_transition = Some(record);
     Ok(())
 }
@@ -281,7 +287,7 @@ async fn run_ui_loop(
         )?;
 
         terminal.draw(|f| {
-            render_frame(f, &state.latest_diagnostic, &state.latest_transition);
+            render_frame(f, state);
         })?;
 
         if event::poll(Duration::from_millis(50))? {
@@ -321,11 +327,7 @@ fn final_drain_twin_emissions(
     drain_twin_emissions(diag_rx, trans_rx, capture, state)
 }
 
-fn render_frame(
-    f: &mut Frame,
-    latest_diagnostic: &Option<DiagnosticRecord>,
-    latest_transition: &Option<PublishedTransitionRecord>,
-) {
+fn render_frame(f: &mut Frame, state: &DashboardState) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -335,7 +337,7 @@ fn render_frame(
         ])
         .split(f.size());
 
-    let status = format_status_line(latest_diagnostic, latest_transition);
+    let status = format_status_line(&state.latest_diagnostic, &state.latest_transition);
     let session_block = Block::default()
         .title(" Session ")
         .borders(Borders::ALL)
@@ -345,89 +347,87 @@ fn render_frame(
         outer[0],
     );
 
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+    let middle = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(outer[1]);
 
-    let panel_width = chunks[0].width.saturating_sub(4) as usize;
-    let line_limit = panel_width.clamp(24, MAX_PANEL_LINE_CHARS);
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(middle[0]);
 
-    let pre_power = twin_pre_power_on(latest_transition);
+    let driver_width = top[0].width.saturating_sub(2) as usize;
+    let engineer_width = top[1].width.saturating_sub(2) as usize;
+    let ledger_width = middle[1].width.saturating_sub(2) as usize;
+    let ledger_rows = middle[1].height.saturating_sub(2) as usize;
 
-    let diag_text = if pre_power {
-        standby_panel_lines()
-    } else if let Some(d) = latest_diagnostic {
-        vec![
-            Line::from(Span::raw(format_field(
-                "Level",
-                &format!("{:?}", d.level),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field("Source", d.source, line_limit))),
-            Line::from(Span::raw(format_field(
-                "Message",
-                &truncate_line(&d.message),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field(
-                "T+ since session",
-                &format_elapsed(d.elapsed_since_session()),
-                line_limit,
-            ))),
-        ]
-    } else {
-        vec![Line::from(Span::raw("(no diagnostic from twin yet)"))]
-    };
-    let diag_block = Block::default()
-        .title(" Diagnostic ")
+    let driver = view::driver_pane(
+        state.latest_diagnostic.as_ref(),
+        state.latest_transition.as_ref(),
+        driver_width,
+    );
+    let engineer = view::engineer_pane(state.latest_transition.as_ref(), engineer_width);
+    let ledger_lines = state
+        .ledger_tail
+        .visible_lines(ledger_width, ledger_rows);
+
+    // Clear pane areas first so prior-frame glyphs (e.g. ACK ✓) cannot bleed into new text.
+    f.render_widget(Clear, top[0]);
+    f.render_widget(Clear, top[1]);
+    f.render_widget(Clear, middle[1]);
+
+    let pane_title_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let driver_block = Block::default()
+        .title(" Diagnostic/Telemetry ")
+        .title_style(pane_title_style)
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Cyan));
-    f.render_widget(Paragraph::new(diag_text).block(diag_block), chunks[0]);
+        .border_style(Style::default().fg(Color::Cyan));
+    f.render_widget(
+        Paragraph::new(
+            driver
+                .lines
+                .into_iter()
+                .map(|line| Line::from(Span::raw(line)))
+                .collect::<Vec<_>>(),
+        )
+        .block(driver_block),
+        top[0],
+    );
 
-    let trans_text = if pre_power {
-        standby_panel_lines()
-    } else if let Some(t) = latest_transition {
-        vec![
-            Line::from(Span::raw(format_field(
-                "Seq",
-                &t.record_seq.to_string(),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field(
-                "Event",
-                &format_published_event(&t.event),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field(
-                "Old state",
-                &format_published_state(&t.old_state),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field(
-                "Next state",
-                &format_published_state(&t.next_state),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field(
-                "Actions",
-                &format_actions_summary(&t.actions),
-                line_limit,
-            ))),
-            Line::from(Span::raw(format_field(
-                "T+ since session",
-                &format_elapsed(elapsed_since_session(t.recorded_at, t.session_started_at)),
-                line_limit,
-            ))),
-        ]
-    } else {
-        vec![Line::from(Span::raw("(no ledger row from twin yet)"))]
-    };
-    let trans_block = Block::default()
-        .title(" Transition ")
+    let engineer_block = Block::default()
+        .title(" State Transitions ")
+        .title_style(pane_title_style)
         .borders(Borders::ALL)
-        .style(Style::default().fg(Color::Green));
-    f.render_widget(Paragraph::new(trans_text).block(trans_block), chunks[1]);
+        .border_style(Style::default().fg(Color::Green));
+    f.render_widget(
+        Paragraph::new(
+            engineer
+                .lines
+                .into_iter()
+                .map(|line| Line::from(Span::raw(line)))
+                .collect::<Vec<_>>(),
+        )
+        .block(engineer_block),
+        top[1],
+    );
+
+    let ledger_block = Block::default()
+        .title(" Deterministic Transition Ledger (live) ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Magenta));
+    f.render_widget(
+        Paragraph::new(
+            ledger_lines
+                .into_iter()
+                .map(|line| Line::from(Span::raw(line)))
+                .collect::<Vec<_>>(),
+        )
+        .block(ledger_block),
+        middle[1],
+    );
 
     let keys_block = Block::default()
         .borders(Borders::ALL)
@@ -443,37 +443,8 @@ fn twin_pre_power_on(latest_transition: &Option<PublishedTransitionRecord>) -> b
     latest_transition.is_none()
 }
 
-fn format_field(label: &str, value: &str, max_chars: usize) -> String {
-    let value = truncate_to(value, max_chars.saturating_sub(label.len() + 2));
-    format!("{label}: {value}")
-}
-
 fn truncate_line(s: &str) -> String {
-    truncate_to(s, MAX_PANEL_LINE_CHARS)
-}
-
-fn truncate_to(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_owned();
-    }
-    let end = s
-        .char_indices()
-        .nth(max_chars.saturating_sub(1))
-        .map(|(idx, _)| idx)
-        .unwrap_or(s.len());
-    format!("{}…", &s[..end])
-}
-
-fn format_published_event(event: &PublishedFsmEvent) -> String {
-    match event {
-        PublishedFsmEvent::UpdateRpm(rpm) => format!("UpdateRpm({rpm})"),
-        PublishedFsmEvent::UpdateAmbientLux(lux) => format!("UpdateAmbientLux({lux})"),
-        PublishedFsmEvent::FrontHeadlampActuationIncomplete { direction, cause } => {
-            format!("HeadlampIncomplete({direction:?},{cause:?})")
-        }
-        PublishedFsmEvent::Internal(op) => format!("Internal({op:?})"),
-        other => format!("{other:?}"),
-    }
+    view::clip_line(s, MAX_PANEL_LINE_CHARS)
 }
 
 fn format_published_state(state: &PublishedFsmState) -> String {
@@ -502,12 +473,6 @@ fn format_actions_summary(actions: &[PublishedDomainAction]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn standby_panel_lines() -> Vec<Line<'static>> {
-    vec![Line::from(Span::raw(
-        "Twin installed; waiting for PowerOn on CAN — ledger and diagnostics appear after lifecycle starts.",
-    ))]
 }
 
 fn format_status_line(
@@ -597,7 +562,7 @@ mod tests {
         DiagnosticRecord {
             level: DiagnosticLevel::Info,
             source: "VirtualCarActor",
-            message: "initializing".into(),
+            kind: DiagnosticKind::Boot,
             session_started_at: UnixTimestamp::from_duration_since_epoch(Duration::new(
                 1_700_000_000,
                 0,
@@ -649,10 +614,13 @@ mod tests {
 
     #[test]
     fn standby_panels_show_can_lifecycle_message() {
-        let lines = standby_panel_lines();
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].spans[0].content.contains("PowerOn"));
-        assert!(lines[0].spans[0].content.contains("CAN"));
+        let driver = view::driver_pane(None, None, 40);
+        let engineer = view::engineer_pane(None, 40);
+        assert_eq!(driver.lines.len(), 3);
+        assert_eq!(engineer.lines.len(), 3);
+        assert!(driver.lines[1].contains("PowerOn"));
+        assert!(driver.lines[1].contains("CAN"));
+        assert!(engineer.lines[0].starts_with("Twin installed."));
     }
 
     #[test]
@@ -722,8 +690,30 @@ mod tests {
         let retained = state
             .latest_diagnostic
             .expect("state updated after capture");
-        assert_eq!(retained.message, record.message);
+        assert_eq!(retained.kind, record.kind);
         assert_eq!(retained.recorded_at, record.recorded_at);
+    }
+
+    #[test]
+    fn handle_diagnostic_captures_timer_tick_but_does_not_overwrite_notice() {
+        let previous = sample_boot_diagnostic();
+        let mut state = DashboardState {
+            latest_diagnostic: Some(previous.clone()),
+            ..DashboardState::default()
+        };
+        let mut capture = FakeCapture::default();
+        let tick = DiagnosticRecord {
+            level: DiagnosticLevel::Info,
+            source: "VirtualCarActor",
+            kind: DiagnosticKind::TimerTick,
+            session_started_at: previous.session_started_at,
+            recorded_at: previous.recorded_at,
+        };
+
+        handle_diagnostic(tick, &mut capture, &mut state).unwrap();
+
+        assert_eq!(capture.diagnostic_calls, 1);
+        assert_eq!(state.latest_diagnostic.as_ref().unwrap().kind, previous.kind);
     }
 
     #[test]
@@ -736,6 +726,7 @@ mod tests {
 
         assert_eq!(capture.ledger_calls, 1);
         assert_eq!(state.latest_transition, Some(record));
+        assert_eq!(state.ledger_tail.lines(80).len(), 1);
     }
 
     #[test]
@@ -744,13 +735,16 @@ mod tests {
         let mut state = DashboardState {
             latest_diagnostic: Some(previous.clone()),
             latest_transition: None,
+            ledger_tail: view::LedgerTail::default(),
         };
         let mut capture = FakeCapture {
             fail_diagnostic: true,
             ..FakeCapture::default()
         };
         let mut newer = sample_boot_diagnostic();
-        newer.message = "newer diagnostic that must not be retained".into();
+        newer.kind = DiagnosticKind::Text {
+            text: "newer diagnostic that must not be retained".into(),
+        };
 
         let result = handle_diagnostic(newer, &mut capture, &mut state);
 
@@ -759,7 +753,7 @@ mod tests {
         let retained = state
             .latest_diagnostic
             .expect("previous diagnostic must be retained on failure");
-        assert_eq!(retained.message, previous.message);
+        assert_eq!(retained.kind, previous.kind);
     }
 
     #[test]
@@ -768,6 +762,7 @@ mod tests {
         let mut state = DashboardState {
             latest_diagnostic: None,
             latest_transition: Some(previous.clone()),
+            ledger_tail: view::LedgerTail::default(),
         };
         let mut capture = FakeCapture {
             fail_ledger: true,
@@ -801,7 +796,7 @@ mod tests {
         let retained = state
             .latest_diagnostic
             .expect("boot diagnostic captured then retained");
-        assert_eq!(retained.message, boot.message);
+        assert_eq!(retained.kind, boot.kind);
         assert_eq!(retained.source, boot.source);
     }
 
@@ -872,7 +867,10 @@ mod tests {
         let stored = RunReader::open(run_dir).unwrap().load().unwrap();
         assert_eq!(stored.diagnostics.len(), 1);
         assert_eq!(stored.ledger.len(), 1);
-        assert_eq!(stored.diagnostics[0].payload.message, "initializing");
+        assert_eq!(
+            stored.diagnostics[0].payload.kind,
+            observation::schema::v1::DiagnosticKindV1::Boot
+        );
         assert_eq!(stored.ledger[0].payload.record_seq, 1);
         assert_eq!(
             stored.manifest.session_started_at,

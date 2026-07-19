@@ -6,7 +6,7 @@ const USAGE: &str = "usage: observation-summary <run-directory>\n";
 
 fn golden_run_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/golden/v1")
+        .join("testdata/golden/v2")
         .join(RUN_ID)
 }
 
