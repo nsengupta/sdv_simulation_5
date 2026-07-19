@@ -23,10 +23,10 @@ async fn wait_headlamp_state(
 ) {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let Ok(snapshot) = controller.get_snapshot(Some(Duration::from_millis(50))).await {
-            if snapshot.context().headlamp.state == expected {
-                return;
-            }
+        if let Ok(snapshot) = controller.get_snapshot(Some(Duration::from_millis(50))).await
+            && snapshot.context().headlamp.state == expected
+        {
+            return;
         }
         if std::time::Instant::now() >= deadline {
             panic!("timed out after {timeout:?} waiting for headlamp {expected:?}");
@@ -42,10 +42,10 @@ async fn wait_wiper_state(
 ) {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let Ok(snapshot) = controller.get_snapshot(Some(Duration::from_millis(50))).await {
-            if snapshot.context().wiper.state == expected {
-                return;
-            }
+        if let Ok(snapshot) = controller.get_snapshot(Some(Duration::from_millis(50))).await
+            && snapshot.context().wiper.state == expected
+        {
+            return;
         }
         if std::time::Instant::now() >= deadline {
             panic!("timed out after {timeout:?} waiting for wiper {expected:?}");

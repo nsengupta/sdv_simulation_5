@@ -450,7 +450,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "common",
+ "observation",
  "socketcan",
+ "tempfile",
  "tokio",
  "vehicle_device_bus",
 ]
@@ -730,6 +732,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -1394,7 +1397,6 @@ dependencies = [
  "anyhow",
  "common",
  "crossterm",
- "gateway",
  "observation",
  "ratatui",
  "serde",

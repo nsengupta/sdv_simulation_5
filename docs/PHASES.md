@@ -23,8 +23,8 @@ Phase 9  Transport abstraction (CAN vs Zenoh)
 Phase 10 Shutdown, disband, polish (TL-6/7/8)
 ```
 
-**Current codebase** is transitional: `tui_dashboard` still hosts the twin in-process until
-**Phase 6**.
+**Current codebase:** Gateway is the sole twin owner (Phase 6); Dashboard is an observation-only
+UDS consumer. Embedded emulator UI and Zenoh remain later phases.
 
 ---
 
@@ -278,34 +278,39 @@ Plan tasks: [`2026-07-18-phase-5-dashboard-presentation.md`](superpowers/plans/2
 
 ## Phase 6 — Split Gateway and Dashboard processes
 
-**Status:** Not started  
+**Status:** Done  
 **Goal:** **Gateway** is the sole twin owner; **Dashboard** is observation consumer only.
 
-Deferred until Phase 5 proves Twin emissions are sufficient. Absorbs the intent of the former
-[`TODO-connect-to-twin.md`](../TODO-connect-to-twin.md) (Zenoh **not** required yet).
+Design: [`docs/superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md`](superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md).  
+Plan: [`docs/superpowers/plans/2026-07-19-phase-6-gateway-dashboard-split.md`](superpowers/plans/2026-07-19-phase-6-gateway-dashboard-split.md).
 
-### Scope
+Absorbs the former [`TODO-connect-to-twin.md`](../TODO-connect-to-twin.md). Zenoh remains **Phase 9**.
 
-1. **`gateway` binary**: full twin lifecycle — install, CAN ingress, actuation, observation tee.
-2. **`tui_dashboard` binary**: **no** `TwinRuntimeBuilder` / no in-process twin.
-3. Live observation link: **file tail** or **localhost IPC** (UDS/TCP) — pick one at kickoff.
-4. Preserve the observer-only Dashboard: lifecycle remains emulator-driven over CAN.
-5. `TwinRuntimeBuilder` channel ownership model unchanged (callers own receivers).
+### Delivered
 
-### Out of scope
+1. **`gateway`**: install, CAN ingress, actuation, `ObservationTee` (`RunWriter` + optional UDS).
+2. **`tui_dashboard`**: no `TwinRuntimeBuilder`; connects with `--uds` (default `./tmp/observation.sock`).
+3. Live link: **UDS** under `<cwd>/tmp/` (never system `/tmp`); schema-v2 NDJSON `hello` + `event`.
+4. Connect-gated install when `--uds` is set; headless Gateway (no `--uds`) still archives to files.
+5. Observer-only Dashboard; lifecycle remains emulator-driven over CAN.
+6. `TwinRuntimeBuilder` channel ownership unchanged (callers own receivers).
+7. Detachable `LiveSink` / `LiveSource` in `observation` (UDS now; Zenoh later).
+
+### Out of scope (unchanged)
 
 - Zenoh/uProtocol (Phase 9)
 - Embedded emulator in dashboard (Phase 7)
+- Run-directory replay CLI (Phase 8)
 
 ### Tests (mandatory)
 
-- [ ] Gateway integration: install + CAN inject → observation output
-- [ ] Dashboard integration: mock observation stream → UI state updates (headless or unit)
-- [ ] Two-process smoke test script
+- [x] Gateway integration: install + tee → observation files and UDS client (`observation_capture_headless`, `observation_tee_uds`)
+- [x] Dashboard integration: mock `LiveSource` → UI state; footer connected/disconnected
+- [x] Two-process smoke script: [`scripts/smoke-phase6-two-process.sh`](../scripts/smoke-phase6-two-process.sh) (requires `vcan0`)
 
 ### Acceptance
 
-- Documented five-process run order works with split gateway + dashboard
+- Documented multi-process run order: actuators → **gateway** (waits on UDS) → **dashboard** → emulator
 - `cargo test --workspace` passes
 
 ---

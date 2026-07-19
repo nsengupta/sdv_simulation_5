@@ -101,17 +101,17 @@ Human-readable, versioned artifacts:
 
 ## 2. Transitional state (today)
 
-The codebase is **mid-migration**. Phase 2 keeps the twin in-process but makes Dashboard
-lifecycle-passive.
+Process split is done (Phase 6). Remaining migration is embedded emulator UI (Phase 7),
+replay (Phase 8), and Zenoh (Phase 9).
 
 | Aspect | Today | Target |
 |--------|--------|--------|
-| Twin location | **In-process** inside `tui_dashboard` via `TwinRuntimeBuilder` | **Gateway** process only |
-| Dashboard ↔ Twin | Tokio MPSC channels in one `main()` | Observation over file/IPC → later Zenoh |
+| Twin location | **Gateway** process via `TwinRuntimeBuilder` | **Gateway** process only |
+| Dashboard ↔ Twin | Live UDS (`LiveSink`/`LiveSource`, schema v2 NDJSON) under `<cwd>/tmp/` | Same, then Zenoh (Phase 9) |
 | Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
 | Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
-| Observation capture | Phase 3 `observation` L6 adapter; Dashboard owns capture while the twin remains in-process | Versioned `manifest.json` plus `diagnostic.jsonl` and `ledger.jsonl`; Gateway assumes ownership in Phase 6 |
-| Dashboard presentation | Phase 5 driver / engineer / ledger-tail view over existing emissions; follow-up: structured `PaneLine` + zoned speed bar (`common` bands) before Phase 6 | Honest gaps (`—`) until Twin fields are added; inline widgets (visibility/weather) later on same model |
+| Observation capture | Gateway `ObservationTee` → `RunWriter` (+ optional UDS); Dashboard observation-only | Unchanged file contract; Phase 8 replay from run dirs |
+| Dashboard presentation | Phase 5 driver / engineer / ledger-tail; footer shows UDS connected/disconnected | Honest gaps (`—`) until Twin fields are added; inline widgets later |
 | Replay | None | Phase 8 |
 
 **Naming:** keep crate **`tui_dashboard`** for now. **`simulator`** is reserved for a possible future umbrella binary name.
@@ -126,13 +126,13 @@ lifecycle-passive.
 | G2 | **Closed:** silent ignore while `Off` enforced at the twin FSM boundary | **1** |
 | G3 | **Closed:** finite emulator sends full lifecycle and telemetry on CAN | **2** |
 | G4 | CSV/echo / Mode 2 file `TelemetrySource` deferred (seam exists; reader TODO) | Future / post–Phase 4 |
-| G5 | Twin co-located with dashboard (process split deferred until Phase 5 proves emissions) | **6** |
+| G5 | **Closed:** Gateway sole twin owner; Dashboard UDS observation consumer | **6** |
 | G6 | **Closed:** versioned, human-readable observation artifacts written by the L6 `observation` adapter | **3** |
 | G7 | No E2E observation golden / `observation-compare` yet (Phase 4 delivered emulator session; golden remains TODO) | Later |
 | G8 | Dashboard cannot drive embedded emulator from TUI | **6** |
 | G9 | No standalone replay mode | **7** |
 | G10 | Actuators / emulator / gateway locked to CAN socket | **8** (Zenoh) |
-| G11 | Quit stops in-process twin; no graceful disband | **9** (TL-6/7) |
+| G11 | No graceful twin disband on Gateway stop (Dashboard `q` no longer tears down twin) | **10** (TL-6/7) |
 
 ---
 
@@ -141,11 +141,17 @@ lifecycle-passive.
 ```bash
 cargo run -p front_headlamp_actuator
 cargo run -p wiper_actuator
-cargo run -p tui_dashboard
+cargo run -p gateway -- --uds observation.sock
+# after Gateway prints “waiting for Dashboard”:
+cargo run -p tui_dashboard -- --uds observation.sock
 EMULATOR_TUNNEL_PROB=0.01 \
 EMULATOR_RAIN_PROB=0.008 \
 cargo run -p emulator -- --readings 30
 ```
+
+UDS paths resolve under `<cwd>/tmp/` (default `./tmp/observation.sock`). Headless capture:
+`cargo run -p gateway` (no `--uds`) still writes `./observations/<run-id>/`.
+Automated smoke: [`scripts/smoke-phase6-two-process.sh`](../scripts/smoke-phase6-two-process.sh).
 
 With `--readings N`, the emulator sends PowerOn, then `N` RPM/lux/rain cycles, then RPM zero and
 PowerOff (`3N + 3` frames). Without `--readings`, it runs until Ctrl+C on the emulator process,
@@ -161,13 +167,11 @@ The `observation` crate is an L6 persistence adapter. It depends downward only o
 depends on `observation`. The detailed pyramid boundary is documented in
 [`design-notes-pyramid-layers.md`](design-notes-pyramid-layers.md).
 
-During the transitional combined application, `tui_dashboard` is both the live-stream receiver
-and capture owner. It writes every consumed diagnostic and ledger record before retaining that
-record as the UI's latest state. Each run has a versioned `manifest.json` and separate
-`diagnostic.jsonl` and `ledger.jsonl` streams beneath a UUID run directory. This ownership moves
-to Gateway with the Phase 6 process split without changing the file contract. See the
-[Phase 3 design specification](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md)
-for schema, reader, and durability details.
+**Gateway** owns capture via `ObservationTee` (convert once → `RunWriter` + optional `LiveSink`).
+Each run has a versioned `manifest.json` and separate `diagnostic.jsonl` / `ledger.jsonl`
+streams. Dashboard consumes the live UDS feed only (apply-before-display). See the
+[Phase 3 design](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md) and
+[Phase 6 design](superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md).
 
 ---
 
@@ -189,6 +193,7 @@ for schema, reader, and durability details.
 | 2026-07-17 | Phase 3 stores a separate `manifest.json`, `diagnostic.jsonl`, and `ledger.jsonl`; production run IDs are UUID v4 while tests inject deterministic IDs; transitional Dashboard capture ownership moves to Gateway in Phase 6. |
 | 2026-07-18 | Phase 5 reworks Dashboard presentation (driver/engineer/ledger tail); Gateway↔Dashboard split deferred to Phase 6. |
 | 2026-07-18 | Twin-authored wall times use a live `UnixTimestamp` (`Duration` since Unix Epoch). Schema v1 stores `{unix_seconds,nanosecond}` objects; summary/UI presentation is `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`. Manifest keeps capture `created_at` and Twin `session_started_at`; Dashboard requires the boot diagnostic before creating a run. |
+| 2026-07-19 | Phase 6: Gateway sole twin owner + capture tee; Dashboard UDS consumer; sockets under `<cwd>/tmp/`; detachable `LiveSink`/`LiveSource`. |
 
 ---
 
@@ -196,7 +201,8 @@ for schema, reader, and durability details.
 
 | Topic | Path |
 |-------|------|
-| Combined app (transitional) | `crates/tui_dashboard/src/main.rs` |
+| Observation-only Dashboard | `crates/tui_dashboard/src/main.rs` |
+| Gateway binary (capture + optional UDS) | `crates/gateway/src/main.rs` |
 | Gateway runtime / builder | `crates/gateway/src/gateway_runtime.rs` |
 | CAN reader / dispatch | `crates/gateway/src/gateway_runtime.rs` |
 | Twin ingress → FSM projection | `crates/common/src/twin_runtime/connectors/ingress_to_fsm.rs` |
@@ -204,9 +210,9 @@ for schema, reader, and durability details.
 | Silent ignore enforcement (Phase 1) | `crates/common/src/twin_runtime/controller/virtual_car_actor.rs` |
 | Finite emulator composition | `crates/emulator/src/main.rs`, `crates/emulator/src/runner.rs` |
 | Headlamp / wiper actuators | `crates/front_headlamp_actuator/`, `crates/wiper_actuator/` |
-| Observation schema, reader, and writer | `crates/observation/` |
-| Dashboard capture composition | `crates/tui_dashboard/src/main.rs` |
+| Observation schema, tee, live UDS | `crates/observation/` |
+| Phase 6 smoke | `scripts/smoke-phase6-two-process.sh` |
 
 ---
 
-*Last updated: 2026-07-18 — numeric Unix timestamps in live records and schema v1.*
+*Last updated: 2026-07-19 — Phase 6 Gateway/Dashboard process split.*

@@ -818,22 +818,16 @@ file tail or simple IPC first ([`PHASES.md` Phase 6](docs/PHASES.md)); Zenoh/uPr
 | **Target — Gateway** | Gateway process | Emulator CAN `0x100` | Production twin host |
 | **Target — Dashboard** | None (observation only) | Embedded emulator / CSV | Driver + engineer TUI |
 | **Target — Replay** | None | N/A (stored observation) | Reproducibility |
-| **Today — `tui_dashboard`** | In-process | Transitional **`s`** / emulator | Development convenience |
+| **Today — `tui_dashboard`** | None (UDS observation only) | Emulator CAN `0x100` | Observer TUI |
 | **Gateway headless** | Gateway process | Opt-in `auto_power_on` | CI / scripts |
 
 Implementation tasks: `docs/TODO-twin-lifecycle.md`.
 
-### 16.6 Quit (`q`) — current limitation
+### 16.6 Quit (`q`) — current behaviour
 
-Today, **`q` / Esc ends the dashboard loop and exits the process**. That drops the runtime
-`JoinHandle` from `spawn_runtime()`, which **stops CAN ingress and tears down the twin
-workers** as a side effect of process exit — even though the dashboard itself is only a
-display layer.
+**`q` / Esc** ends the Dashboard loop, closes the UDS connection, and exits the TUI process.
+The **Gateway twin keeps running** (Phase 6 split). Emulators and actuators on `vcan0` are
+unaffected.
 
-This is a **convenience coupling**, not the long-term architecture:
-
-- **Target (TL-6):** quit should run an explicit Stop / disband sequence when needed; emulators
-  and actuators may keep running on `vcan0` independently.
-- **Today:** quitting stops both the TUI and the in-process Digital Twin together.
-
-Emulators and actuators in other terminals are unaffected by dashboard quit.
+- **Target (TL-6 / Phase 10):** Gateway Stop / disband sequence when the twin host itself exits.
+- **Today:** Dashboard quit is observation-only teardown.

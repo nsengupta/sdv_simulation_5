@@ -64,10 +64,8 @@ enum CanIngressEnvelope {
 
 /// Assembles and runs the live Digital Twin runtime.
 ///
-/// Gateway creates channels, attaches stdout observers, calls [`run()`](Self::run).
-/// Dashboard creates channels, calls [`install_controller()`](Self::install_controller)
-/// + [`spawn_runtime()`](Self::spawn_runtime) separately, then runs its own UI loop
-/// while holding the receivers.
+/// Gateway creates channels, attaches observers, and calls [`run()`](Self::run)
+/// (or `install_controller` + `spawn_runtime` when composing capture/tee in `main`).
 pub struct TwinRuntimeBuilder {
     car_identity: Option<String>,
     can_interface: String,

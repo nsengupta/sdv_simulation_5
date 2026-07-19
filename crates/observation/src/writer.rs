@@ -14,7 +14,8 @@ use common::facade::{DiagnosticRecord, PublishedTransitionRecord};
 use crate::ObservationError;
 use crate::schema::CURRENT_SCHEMA_VERSION;
 use crate::schema::v1::{
-    ManifestV1, RunMetadata, StreamsV1, VehicleV1, diagnostic_envelope, ledger_envelope,
+    DiagnosticPayloadV1, LedgerPayloadV1, ManifestV1, RunMetadata, StreamEnvelopeV1, StreamsV1,
+    VehicleV1, diagnostic_envelope, ledger_envelope,
 };
 
 const MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -94,11 +95,14 @@ impl RunWriter {
         &self.run_dir
     }
 
+    pub fn metadata(&self) -> &RunMetadata {
+        &self.metadata
+    }
+
     /// Project, serialize, and durably append one diagnostic row.
     pub fn record_diagnostic(&mut self, record: &DiagnosticRecord) -> Result<(), ObservationError> {
         let envelope = diagnostic_envelope(&self.metadata, record)?;
-        let path = self.run_dir.join(DIAGNOSTIC_FILE_NAME);
-        write_json_line(&mut self.diagnostic, &path, &envelope)
+        self.write_diagnostic_envelope(&envelope)
     }
 
     /// Project, serialize, and durably append one ledger row.
@@ -107,8 +111,25 @@ impl RunWriter {
         record: &PublishedTransitionRecord,
     ) -> Result<(), ObservationError> {
         let envelope = ledger_envelope(&self.metadata, record)?;
+        self.write_ledger_envelope(&envelope)
+    }
+
+    /// Append an already-projected diagnostic envelope (single-convert tee path).
+    pub fn write_diagnostic_envelope(
+        &mut self,
+        envelope: &StreamEnvelopeV1<DiagnosticPayloadV1>,
+    ) -> Result<(), ObservationError> {
+        let path = self.run_dir.join(DIAGNOSTIC_FILE_NAME);
+        write_json_line(&mut self.diagnostic, &path, envelope)
+    }
+
+    /// Append an already-projected ledger envelope (single-convert tee path).
+    pub fn write_ledger_envelope(
+        &mut self,
+        envelope: &StreamEnvelopeV1<LedgerPayloadV1>,
+    ) -> Result<(), ObservationError> {
         let path = self.run_dir.join(LEDGER_FILE_NAME);
-        write_json_line(&mut self.ledger, &path, &envelope)
+        write_json_line(&mut self.ledger, &path, envelope)
     }
 
     /// Flush both streams. Every row is already flushed by `record_*`, so this guards against

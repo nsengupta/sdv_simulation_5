@@ -1,7 +1,7 @@
 # Phase 6 — Split Gateway and Dashboard processes
 
 **Date:** 2026-07-19  
-**Status:** Approved (design dialogue)  
+**Status:** Implemented (Phase 6 Done)  
 **Related:** [`docs/PHASES.md`](../../PHASES.md) § Phase 6,
 [`docs/ARCHITECTURE-OVERVIEW.md`](../../ARCHITECTURE-OVERVIEW.md) § transitional vs target (G5),
 [`DESIGN.md`](../../../DESIGN.md) §16 Gateway vs Dashboard,

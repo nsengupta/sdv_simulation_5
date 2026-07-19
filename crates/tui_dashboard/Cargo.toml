@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 common = { path = "../common" }
-gateway = { path = "../gateway" }
 observation = { path = "../observation" }
 ratatui = "0.26"
 tokio = { version = "1", features = ["full"] }

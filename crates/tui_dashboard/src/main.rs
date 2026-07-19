@@ -1,130 +1,163 @@
-//! Single-application entry: **Digital Twin** (via gateway runtime APIs) + **Dashboard**.
+//! Observation-only Dashboard: connects to Gateway over UDS and renders twin emissions.
 //!
-//! `main()` wires observation channels in setup, installs the twin through
-//! [`TwinRuntimeBuilder`], then runs the dashboard as a passive display of twin emissions.
-//! Session elapsed time is derived from twin records ([`SessionClock`]), not a local clock.
-//!
-//! Only **`q`** / Esc quit the dashboard. Lifecycle (PowerOn/PowerOff) is CAN / emulator driven.
-//! Vehicle operation (RPM, park, lighting, …) is CAN / emulator driven — not the dashboard.
+//! Lifecycle (PowerOn/PowerOff) remains emulator-driven over CAN. Only **`q`** / Esc quit the TUI.
 
 mod cli;
 mod view;
 
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use common::observation_records::diagnostic::elapsed_since_session;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
-use gateway::gateway_runtime::TwinRuntimeBuilder;
+use observation::{
+    LiveMessage, LiveRecordDto, LiveStream, UdsLiveSource, diagnostic_from_envelope,
+    ledger_from_envelope,
+};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::{Frame, Terminal};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
-use common::facade::{
-    PublishedFsmEvent, PublishedFsmState, PublishedTransitionRecord, UnixTimestamp,
-};
+use common::facade::{PublishedFsmState, PublishedTransitionRecord, UnixTimestamp};
 use common::{DiagnosticKind, DiagnosticRecord};
-use common::PublishedDomainAction;
-use observation::{RunId, RunMetadata, RunWriter, UnixTimestampV1};
 use view::{PaneLine, SegmentContent, SegmentStyle};
 
 const VIRTUAL_CAR_IDENTITY: &str = "My-Opel-Corsa-1.4-GSi";
-const BOOT_DIAGNOSTIC_WAIT: Duration = Duration::from_millis(500);
-const KEYS_FOOTER: &str = "Keys: 'q' quit";
-const MAX_PANEL_LINE_CHARS: usize = 72;
+const BOOT_DIAGNOSTIC_WAIT: Duration = Duration::from_secs(5);
 
 type DashboardTerminal = Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>;
 
-/// Channels and runtime handles wired in `main()` before the dashboard loop runs.
-struct DigitalTwinRuntime {
-    diagnostic_rx: mpsc::UnboundedReceiver<DiagnosticRecord>,
-    transition_rx: mpsc::Receiver<PublishedTransitionRecord>,
-    /// Keeps CAN ingress and actuation workers alive for the session.
-    _runtime_handle: JoinHandle<Result<()>>,
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum ConnectionStatus {
+    Connected { uds: PathBuf },
+    #[default]
+    Disconnected,
+}
+
+struct DashboardState {
+    latest_diagnostic: Option<DiagnosticRecord>,
+    latest_transition: Option<PublishedTransitionRecord>,
+    ledger_tail: view::LedgerTail,
+    connection: ConnectionStatus,
+}
+
+impl Default for DashboardState {
+    fn default() -> Self {
+        Self {
+            latest_diagnostic: None,
+            latest_transition: None,
+            ledger_tail: view::LedgerTail::default(),
+            connection: ConnectionStatus::Disconnected,
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = cli::parse_args(std::env::args_os().skip(1))?;
-    let mut twin = install_digital_twin().await?;
-    let boot = require_boot_diagnostic(&mut twin.diagnostic_rx, BOOT_DIAGNOSTIC_WAIT).await?;
-    let metadata = RunMetadata::now(
-        RunId::new_v4(),
-        UnixTimestampV1::from_live(boot.session_started_at),
-        VIRTUAL_CAR_IDENTITY,
-        None,
-    )?;
-    let capture = RunWriter::create(&args.observation_dir, metadata)?;
-    eprintln!("Observation run: {}", capture.run_dir().display());
-    run_dashboard(&mut twin, capture, boot).await
+    let mut source = UdsLiveSource::connect(&args.uds)
+        .await
+        .with_context(|| format!("connect to Gateway UDS {}", args.uds.display()))?;
+
+    let hello = tokio::time::timeout(BOOT_DIAGNOSTIC_WAIT, source.recv())
+        .await
+        .context("timed out waiting for hello from Gateway")?
+        .context("UDS closed before hello")?
+        .context("empty hello")?;
+    match hello {
+        LiveMessage::Hello { .. } => {}
+        other => bail!("expected hello from Gateway, got {other:?}"),
+    }
+
+    let mut state = DashboardState {
+        connection: ConnectionStatus::Connected {
+            uds: args.uds.clone(),
+        },
+        ..DashboardState::default()
+    };
+
+    let boot = require_boot_from_source(&mut source, BOOT_DIAGNOSTIC_WAIT).await?;
+    apply_diagnostic(boot, &mut state);
+
+    let (live_tx, live_rx) = mpsc::unbounded_channel::<LiveMessage>();
+    let (status_tx, status_rx) = mpsc::unbounded_channel::<ConnectionStatus>();
+    tokio::spawn(async move {
+        forward_live_source(source, live_tx, status_tx).await;
+    });
+
+    run_dashboard(live_rx, status_rx, state).await
 }
 
-/// Setup call-tree: create channels, install twin via gateway runtime APIs, spawn ingress.
-async fn install_digital_twin() -> Result<DigitalTwinRuntime> {
-    let (diag_tx, diagnostic_rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
-    let (trans_tx, transition_rx) = mpsc::channel::<PublishedTransitionRecord>(256);
+async fn forward_live_source(
+    mut source: UdsLiveSource,
+    live_tx: mpsc::UnboundedSender<LiveMessage>,
+    status_tx: mpsc::UnboundedSender<ConnectionStatus>,
+) {
+    loop {
+        match source.recv().await {
+            Ok(Some(message)) => {
+                if live_tx.send(message).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => {
+                let _ = status_tx.send(ConnectionStatus::Disconnected);
+                break;
+            }
+            Err(_) => {
+                let _ = status_tx.send(ConnectionStatus::Disconnected);
+                break;
+            }
+        }
+    }
+}
 
-    let mut builder = TwinRuntimeBuilder::new()
-        .with_car_identity(VIRTUAL_CAR_IDENTITY)
-        .with_can_interface(gateway::gateway_runtime::DEFAULT_CAN_INTERFACE)
-        .with_auto_power_on(false)
-        .with_diagnostic_channel(diag_tx)
-        .with_transition_channel(trans_tx);
-
-    let (controller, _opts) = builder.install_controller().await?;
-    let runtime_handle = builder.spawn_runtime(controller)?;
-
-    Ok(DigitalTwinRuntime {
-        diagnostic_rx,
-        transition_rx,
-        _runtime_handle: runtime_handle,
-    })
+async fn require_boot_from_source(
+    source: &mut UdsLiveSource,
+    wait: Duration,
+) -> Result<DiagnosticRecord> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            bail!("timed out waiting for Twin boot diagnostic over UDS");
+        }
+        match tokio::time::timeout(remaining, source.recv()).await {
+            Ok(Ok(Some(LiveMessage::Event {
+                stream: LiveStream::Diagnostic,
+                record: LiveRecordDto::Diagnostic(env),
+            }))) => {
+                let record = diagnostic_from_envelope(&env)?;
+                if matches!(record.kind, DiagnosticKind::Boot) {
+                    return Ok(record);
+                }
+                // Non-boot diagnostics before boot are unexpected; keep waiting.
+            }
+            Ok(Ok(Some(_))) => continue,
+            Ok(Ok(None)) => bail!("UDS closed before boot diagnostic"),
+            Ok(Err(err)) => return Err(err.into()),
+            Err(_) => bail!("timed out waiting for Twin boot diagnostic over UDS"),
+        }
+    }
 }
 
 async fn run_dashboard(
-    twin: &mut DigitalTwinRuntime,
-    mut capture: RunWriter,
-    boot: DiagnosticRecord,
+    mut live_rx: mpsc::UnboundedReceiver<LiveMessage>,
+    mut status_rx: mpsc::UnboundedReceiver<ConnectionStatus>,
+    mut state: DashboardState,
 ) -> Result<()> {
-    let mut state = DashboardState::default();
-
-    // The boot diagnostic is persisted before any terminal setup so a capture failure here
-    // propagates cleanly without leaving the terminal in raw mode.
-    capture = handle_boot_before_terminal(boot, capture, &mut state)?;
-
-    let mut terminal = match setup_terminal() {
-        Ok(terminal) => terminal,
-        Err(setup_error) => {
-            let finish_result = capture.finish_capture();
-            return preserve_primary_result(Err(setup_error), finish_result);
-        }
-    };
-
-    let loop_result = run_ui_loop(&mut terminal, twin, &mut capture, &mut state).await;
-    let final_drain_result = final_drain_twin_emissions(
-        &mut twin.diagnostic_rx,
-        &mut twin.transition_rx,
-        &mut capture,
-        &mut state,
-    );
-    let operation_result = preserve_primary_result(loop_result, final_drain_result);
-
+    let mut terminal = setup_terminal()?;
+    let loop_result = run_ui_loop(&mut terminal, &mut live_rx, &mut status_rx, &mut state).await;
     let restoration_result = restore_terminal(&mut terminal);
-    let finish_result = capture.finish_capture();
-
-    // All work above is attempted before results are combined: terminal restoration precedes
-    // finish, and finish runs on both successful and failed loop/final-drain paths. The earliest
-    // operation error remains primary if restoration or finish also fail.
-    let result = preserve_primary_result(operation_result, restoration_result);
-    preserve_primary_result(result, finish_result)
+    preserve_primary_result(loop_result, restoration_result)
 }
 
 fn setup_terminal() -> Result<DashboardTerminal> {
@@ -171,121 +204,63 @@ fn preserve_primary_result(primary: Result<()>, secondary: Result<()>) -> Result
     }
 }
 
-/// Application boundary for durable capture. Keeping it narrow lets the UI loop be driven by a
-/// fake in tests while `RunWriter` provides the production implementation.
-trait RecordCapture {
-    fn record_diagnostic(&mut self, record: &DiagnosticRecord) -> Result<()>;
-    fn record_ledger(&mut self, record: &PublishedTransitionRecord) -> Result<()>;
-}
-
-trait CaptureFinalizer {
-    fn finish_capture(self) -> Result<()>;
-}
-
-impl RecordCapture for RunWriter {
-    fn record_diagnostic(&mut self, record: &DiagnosticRecord) -> Result<()> {
-        RunWriter::record_diagnostic(self, record)?;
-        Ok(())
-    }
-
-    fn record_ledger(&mut self, record: &PublishedTransitionRecord) -> Result<()> {
-        RunWriter::record_ledger(self, record)?;
-        Ok(())
-    }
-}
-
-impl CaptureFinalizer for RunWriter {
-    fn finish_capture(self) -> Result<()> {
-        self.finish()?;
-        Ok(())
-    }
-}
-
-/// Latest twin emissions retained purely for rendering; every record is captured first.
-#[derive(Default)]
-struct DashboardState {
-    latest_diagnostic: Option<DiagnosticRecord>,
-    latest_transition: Option<PublishedTransitionRecord>,
-    ledger_tail: view::LedgerTail,
-}
-
-fn handle_diagnostic(
-    record: DiagnosticRecord,
-    capture: &mut impl RecordCapture,
-    state: &mut DashboardState,
-) -> Result<()> {
-    capture.record_diagnostic(&record)?;
-    // Capture every fact; Observer Notice filters noisy kinds (e.g. TimerTick).
+fn apply_diagnostic(record: DiagnosticRecord, state: &mut DashboardState) {
     if view::should_update_notice(&record.kind) {
         state.latest_diagnostic = Some(record);
     }
-    Ok(())
 }
 
-fn handle_ledger(
-    record: PublishedTransitionRecord,
-    capture: &mut impl RecordCapture,
-    state: &mut DashboardState,
-) -> Result<()> {
-    capture.record_ledger(&record)?;
+fn apply_ledger(record: PublishedTransitionRecord, state: &mut DashboardState) {
     state.ledger_tail.push(record.clone());
     state.latest_transition = Some(record);
-    Ok(())
 }
 
-fn handle_boot_before_terminal<C>(
-    record: DiagnosticRecord,
-    mut capture: C,
-    state: &mut DashboardState,
-) -> Result<C>
-where
-    C: RecordCapture + CaptureFinalizer,
-{
-    match handle_diagnostic(record, &mut capture, state) {
-        Ok(()) => Ok(capture),
-        Err(boot_error) => {
-            let result = preserve_primary_result(Err(boot_error), capture.finish_capture());
-            match result {
-                Err(error) => Err(error),
-                Ok(()) => unreachable!("a boot capture error is always primary"),
-            }
+fn apply_live_message(message: LiveMessage, state: &mut DashboardState) -> Result<()> {
+    match message {
+        LiveMessage::Hello { .. } => Ok(()),
+        LiveMessage::Event {
+            stream: LiveStream::Diagnostic,
+            record: LiveRecordDto::Diagnostic(env),
+        } => {
+            apply_diagnostic(diagnostic_from_envelope(&env)?, state);
+            Ok(())
+        }
+        LiveMessage::Event {
+            stream: LiveStream::Ledger,
+            record: LiveRecordDto::Ledger(env),
+        } => {
+            apply_ledger(ledger_from_envelope(&env)?, state);
+            Ok(())
+        }
+        LiveMessage::Event { stream, .. } => {
+            eprintln!("[dashboard] skipping mismatched live event for {stream:?}");
+            Ok(())
         }
     }
 }
 
-async fn await_boot_diagnostic(
-    rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
-    timeout: Duration,
-) -> Option<DiagnosticRecord> {
-    match tokio::time::timeout(timeout, rx.recv()).await {
-        Ok(Some(record)) => Some(record),
-        Ok(None) | Err(_) => None,
+fn drain_live_messages(
+    live_rx: &mut mpsc::UnboundedReceiver<LiveMessage>,
+    status_rx: &mut mpsc::UnboundedReceiver<ConnectionStatus>,
+    state: &mut DashboardState,
+) -> Result<()> {
+    while let Ok(status) = status_rx.try_recv() {
+        state.connection = status;
     }
-}
-
-/// Require the Twin boot diagnostic before creating a run directory.
-async fn require_boot_diagnostic(
-    rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
-    timeout: Duration,
-) -> Result<DiagnosticRecord> {
-    await_boot_diagnostic(rx, timeout)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("timed out waiting for Twin boot diagnostic"))
+    while let Ok(message) = live_rx.try_recv() {
+        apply_live_message(message, state)?;
+    }
+    Ok(())
 }
 
 async fn run_ui_loop(
     terminal: &mut DashboardTerminal,
-    twin: &mut DigitalTwinRuntime,
-    capture: &mut impl RecordCapture,
+    live_rx: &mut mpsc::UnboundedReceiver<LiveMessage>,
+    status_rx: &mut mpsc::UnboundedReceiver<ConnectionStatus>,
     state: &mut DashboardState,
 ) -> Result<()> {
     loop {
-        drain_twin_emissions(
-            &mut twin.diagnostic_rx,
-            &mut twin.transition_rx,
-            capture,
-            state,
-        )?;
+        drain_live_messages(live_rx, status_rx, state)?;
 
         terminal.draw(|f| {
             render_frame(f, state);
@@ -303,29 +278,13 @@ async fn run_ui_loop(
     Ok(())
 }
 
-/// Dashboard trusts the twin: capture every emission durably before retaining it for display.
-fn drain_twin_emissions(
-    diag_rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
-    trans_rx: &mut mpsc::Receiver<PublishedTransitionRecord>,
-    capture: &mut impl RecordCapture,
-    state: &mut DashboardState,
-) -> Result<()> {
-    while let Ok(record) = diag_rx.try_recv() {
-        handle_diagnostic(record, capture, state)?;
+fn format_keys_footer(connection: &ConnectionStatus) -> String {
+    match connection {
+        ConnectionStatus::Connected { uds } => {
+            format!("Connected to twin via {} | Keys: 'q' quit", uds.display())
+        }
+        ConnectionStatus::Disconnected => "Disconnected from twin | Keys: 'q' quit".to_string(),
     }
-    while let Ok(record) = trans_rx.try_recv() {
-        handle_ledger(record, capture, state)?;
-    }
-    Ok(())
-}
-
-fn final_drain_twin_emissions(
-    diag_rx: &mut mpsc::UnboundedReceiver<DiagnosticRecord>,
-    trans_rx: &mut mpsc::Receiver<PublishedTransitionRecord>,
-    capture: &mut impl RecordCapture,
-    state: &mut DashboardState,
-) -> Result<()> {
-    drain_twin_emissions(diag_rx, trans_rx, capture, state)
 }
 
 fn render_frame(f: &mut Frame, state: &DashboardState) {
@@ -369,11 +328,8 @@ fn render_frame(f: &mut Frame, state: &DashboardState) {
         driver_width,
     );
     let engineer = view::engineer_pane(state.latest_transition.as_ref(), engineer_width);
-    let ledger_lines = state
-        .ledger_tail
-        .visible_lines(ledger_width, ledger_rows);
+    let ledger_lines = state.ledger_tail.visible_lines(ledger_width, ledger_rows);
 
-    // Clear pane areas first so prior-frame glyphs (e.g. ACK ✓) cannot bleed into new text.
     f.render_widget(Clear, top[0]);
     f.render_widget(Clear, top[1]);
     f.render_widget(Clear, middle[1]);
@@ -434,7 +390,8 @@ fn render_frame(f: &mut Frame, state: &DashboardState) {
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(
-        Paragraph::new(Line::from(Span::raw(KEYS_FOOTER))).block(keys_block),
+        Paragraph::new(Line::from(Span::raw(format_keys_footer(&state.connection))))
+            .block(keys_block),
         outer[2],
     );
 }
@@ -469,15 +426,6 @@ fn segment_style(token: SegmentStyle) -> Style {
     }
 }
 
-/// Before the first ledger row (PowerOn), twin is installed but not yet powered for observation panes.
-fn twin_pre_power_on(latest_transition: &Option<PublishedTransitionRecord>) -> bool {
-    latest_transition.is_none()
-}
-
-fn truncate_line(s: &str) -> String {
-    view::clip_line(s, MAX_PANEL_LINE_CHARS)
-}
-
 fn format_published_state(state: &PublishedFsmState) -> String {
     match state {
         PublishedFsmState::ExtremeOperationWarning { entered_at } => {
@@ -488,22 +436,6 @@ fn format_published_state(state: &PublishedFsmState) -> String {
         }
         other => format!("{other:?}"),
     }
-}
-
-fn format_actions_summary(actions: &[PublishedDomainAction]) -> String {
-    if actions.is_empty() {
-        return "—".to_string();
-    }
-    actions
-        .iter()
-        .map(|action| match action {
-            PublishedDomainAction::LogWarning(msg) => {
-                format!("LogWarning({})", truncate_line(msg))
-            }
-            other => format!("{other:?}"),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn format_status_line(
@@ -585,9 +517,39 @@ fn format_unix_timestamp_short(timestamp: UnixTimestamp) -> String {
 mod tests {
     use super::*;
     use common::DiagnosticLevel;
-    use observation::RunReader;
-    use std::cell::Cell;
-    use std::rc::Rc;
+    use common::facade::{PublishedDomainAction, PublishedFsmEvent};
+    use observation::schema::CURRENT_SCHEMA_VERSION;
+    use observation::schema::v1::{
+        DiagnosticKindV1, DiagnosticLevelV1, DiagnosticPayloadV1, RunId, StreamEnvelopeV1,
+        UnixTimestampV1,
+    };
+    use observation::{LiveMessage, LiveSink, MemoryLiveLink, MemoryLiveSource};
+
+    const MAX_PANEL_LINE_CHARS: usize = 72;
+
+    fn twin_pre_power_on(latest_transition: &Option<PublishedTransitionRecord>) -> bool {
+        latest_transition.is_none()
+    }
+
+    fn truncate_line(s: &str) -> String {
+        view::clip_line(s, MAX_PANEL_LINE_CHARS)
+    }
+
+    fn format_actions_summary(actions: &[PublishedDomainAction]) -> String {
+        if actions.is_empty() {
+            return "—".to_string();
+        }
+        actions
+            .iter()
+            .map(|action| match action {
+                PublishedDomainAction::LogWarning(msg) => {
+                    format!("LogWarning({})", truncate_line(msg))
+                }
+                other => format!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 
     fn sample_boot_diagnostic() -> DiagnosticRecord {
         DiagnosticRecord {
@@ -655,8 +617,17 @@ mod tests {
     }
 
     #[test]
-    fn keys_footer_lists_quit_only() {
-        assert_eq!(KEYS_FOOTER, "Keys: 'q' quit");
+    fn keys_footer_shows_connected_and_disconnected() {
+        let connected = format_keys_footer(&ConnectionStatus::Connected {
+            uds: PathBuf::from("./tmp/observation.sock"),
+        });
+        assert!(connected.contains("Connected to twin via"));
+        assert!(connected.contains("./tmp/observation.sock"));
+        assert!(connected.contains("Keys: 'q' quit"));
+
+        let disconnected = format_keys_footer(&ConnectionStatus::Disconnected);
+        assert!(disconnected.starts_with("Disconnected from twin"));
+        assert!(disconnected.contains("Keys: 'q' quit"));
     }
 
     #[test]
@@ -682,57 +653,21 @@ mod tests {
         assert!(summary.len() < 120);
     }
 
-    /// Records how the handlers drove capture and lets a test force a failure.
-    #[derive(Default)]
-    struct FakeCapture {
-        diagnostic_calls: usize,
-        ledger_calls: usize,
-        fail_diagnostic: bool,
-        fail_ledger: bool,
-    }
-
-    impl RecordCapture for FakeCapture {
-        fn record_diagnostic(&mut self, _record: &DiagnosticRecord) -> Result<()> {
-            self.diagnostic_calls += 1;
-            if self.fail_diagnostic {
-                anyhow::bail!("forced diagnostic capture failure");
-            }
-            Ok(())
-        }
-
-        fn record_ledger(&mut self, _record: &PublishedTransitionRecord) -> Result<()> {
-            self.ledger_calls += 1;
-            if self.fail_ledger {
-                anyhow::bail!("forced ledger capture failure");
-            }
-            Ok(())
-        }
-    }
-
     #[test]
-    fn handle_diagnostic_captures_once_then_updates_state() {
-        let mut capture = FakeCapture::default();
+    fn apply_diagnostic_updates_notice_state() {
         let mut state = DashboardState::default();
         let record = sample_boot_diagnostic();
-
-        handle_diagnostic(record.clone(), &mut capture, &mut state).unwrap();
-
-        assert_eq!(capture.diagnostic_calls, 1);
-        let retained = state
-            .latest_diagnostic
-            .expect("state updated after capture");
-        assert_eq!(retained.kind, record.kind);
-        assert_eq!(retained.recorded_at, record.recorded_at);
+        apply_diagnostic(record.clone(), &mut state);
+        assert_eq!(state.latest_diagnostic.as_ref().unwrap().kind, record.kind);
     }
 
     #[test]
-    fn handle_diagnostic_captures_timer_tick_but_does_not_overwrite_notice() {
+    fn apply_diagnostic_skips_timer_tick_for_notice() {
         let previous = sample_boot_diagnostic();
         let mut state = DashboardState {
             latest_diagnostic: Some(previous.clone()),
             ..DashboardState::default()
         };
-        let mut capture = FakeCapture::default();
         let tick = DiagnosticRecord {
             level: DiagnosticLevel::Info,
             source: "VirtualCarActor",
@@ -740,206 +675,63 @@ mod tests {
             session_started_at: previous.session_started_at,
             recorded_at: previous.recorded_at,
         };
-
-        handle_diagnostic(tick, &mut capture, &mut state).unwrap();
-
-        assert_eq!(capture.diagnostic_calls, 1);
+        apply_diagnostic(tick, &mut state);
         assert_eq!(state.latest_diagnostic.as_ref().unwrap().kind, previous.kind);
     }
 
     #[test]
-    fn handle_ledger_captures_once_then_updates_state() {
-        let mut capture = FakeCapture::default();
+    fn apply_ledger_updates_state_and_tail() {
         let mut state = DashboardState::default();
         let record = sample_ledger_row();
-
-        handle_ledger(record.clone(), &mut capture, &mut state).unwrap();
-
-        assert_eq!(capture.ledger_calls, 1);
+        apply_ledger(record.clone(), &mut state);
         assert_eq!(state.latest_transition, Some(record));
         assert_eq!(state.ledger_tail.lines(80).len(), 1);
     }
 
     #[test]
-    fn handle_diagnostic_error_leaves_previous_latest_unchanged() {
-        let previous = sample_boot_diagnostic();
+    fn mock_live_source_updates_dashboard_state() {
+        let (mut sink, mut source) = MemoryLiveLink::pair();
         let mut state = DashboardState {
-            latest_diagnostic: Some(previous.clone()),
-            latest_transition: None,
-            ledger_tail: view::LedgerTail::default(),
-        };
-        let mut capture = FakeCapture {
-            fail_diagnostic: true,
-            ..FakeCapture::default()
-        };
-        let mut newer = sample_boot_diagnostic();
-        newer.kind = DiagnosticKind::Text {
-            text: "newer diagnostic that must not be retained".into(),
+            connection: ConnectionStatus::Connected {
+                uds: PathBuf::from("./tmp/observation.sock"),
+            },
+            ..DashboardState::default()
         };
 
-        let result = handle_diagnostic(newer, &mut capture, &mut state);
-
-        assert!(result.is_err());
-        assert_eq!(capture.diagnostic_calls, 1);
-        let retained = state
-            .latest_diagnostic
-            .expect("previous diagnostic must be retained on failure");
-        assert_eq!(retained.kind, previous.kind);
-    }
-
-    #[test]
-    fn handle_ledger_error_leaves_previous_latest_unchanged() {
-        let previous = sample_ledger_row();
-        let mut state = DashboardState {
-            latest_diagnostic: None,
-            latest_transition: Some(previous.clone()),
-            ledger_tail: view::LedgerTail::default(),
+        sink.emit(&LiveMessage::hello(VIRTUAL_CAR_IDENTITY)).unwrap();
+        let boot_env = StreamEnvelopeV1 {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            run_id: RunId::parse("00000000-0000-4000-8000-000000000001").unwrap(),
+            vehicle_identity: VIRTUAL_CAR_IDENTITY.into(),
+            recorded_at: UnixTimestampV1::new(1_700_000_000, 50_000_000).unwrap(),
+            payload: DiagnosticPayloadV1 {
+                level: DiagnosticLevelV1::Info,
+                source: "VirtualCarActor".into(),
+                kind: DiagnosticKindV1::Boot,
+                session_started_at: UnixTimestampV1::new(1_700_000_000, 0).unwrap(),
+            },
         };
-        let mut capture = FakeCapture {
-            fail_ledger: true,
-            ..FakeCapture::default()
-        };
-        let mut newer = sample_ledger_row();
-        newer.record_seq = 999;
+        sink.emit(&LiveMessage::diagnostic_event(boot_env)).unwrap();
+        sink.finish().unwrap();
 
-        let result = handle_ledger(newer, &mut capture, &mut state);
+        // Consume hello (connection already set), then boot event.
+        let _hello = observation::LiveSource::recv_blocking(&mut source)
+            .unwrap()
+            .unwrap();
+        let boot_msg = observation::LiveSource::recv_blocking(&mut source)
+            .unwrap()
+            .unwrap();
+        apply_live_message(boot_msg, &mut state).unwrap();
 
-        assert!(result.is_err());
-        assert_eq!(capture.ledger_calls, 1);
-        assert_eq!(state.latest_transition, Some(previous));
-    }
-
-    #[tokio::test]
-    async fn boot_diagnostic_is_routed_through_handle_diagnostic() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
-        let boot = sample_boot_diagnostic();
-        tx.send(boot.clone()).unwrap();
-
-        let received = await_boot_diagnostic(&mut rx, BOOT_DIAGNOSTIC_WAIT)
-            .await
-            .expect("boot diagnostic should be received");
-
-        let mut capture = FakeCapture::default();
-        let mut state = DashboardState::default();
-        handle_diagnostic(received, &mut capture, &mut state).unwrap();
-
-        assert_eq!(capture.diagnostic_calls, 1);
-        let retained = state
-            .latest_diagnostic
-            .expect("boot diagnostic captured then retained");
-        assert_eq!(retained.kind, boot.kind);
-        assert_eq!(retained.source, boot.source);
-    }
-
-    #[derive(Debug)]
-    struct FailingBootCapture {
-        finish_calls: Rc<Cell<usize>>,
-    }
-
-    impl RecordCapture for FailingBootCapture {
-        fn record_diagnostic(&mut self, _record: &DiagnosticRecord) -> Result<()> {
-            anyhow::bail!("boot capture failed")
-        }
-
-        fn record_ledger(&mut self, _record: &PublishedTransitionRecord) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    impl CaptureFinalizer for FailingBootCapture {
-        fn finish_capture(self) -> Result<()> {
-            self.finish_calls.set(self.finish_calls.get() + 1);
-            anyhow::bail!("finish failed")
-        }
-    }
-
-    #[test]
-    fn final_drain_captures_records_queued_after_an_earlier_drain() {
-        let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
-        let (ledger_tx, mut ledger_rx) = mpsc::channel::<PublishedTransitionRecord>(4);
-        let mut capture = FakeCapture::default();
-        let mut state = DashboardState::default();
-
-        drain_twin_emissions(&mut diag_rx, &mut ledger_rx, &mut capture, &mut state).unwrap();
-        diag_tx.send(sample_boot_diagnostic()).unwrap();
-        ledger_tx.try_send(sample_ledger_row()).unwrap();
-
-        final_drain_twin_emissions(&mut diag_rx, &mut ledger_rx, &mut capture, &mut state).unwrap();
-
-        assert_eq!(capture.diagnostic_calls, 1);
-        assert_eq!(capture.ledger_calls, 1);
-        assert!(state.latest_diagnostic.is_some());
-        assert!(state.latest_transition.is_some());
-    }
-
-    #[test]
-    fn production_drain_persists_records_readable_by_run_reader() {
-        let temp = tempfile::tempdir().unwrap();
-        let run_id = RunId::parse("00000000-0000-4000-8000-000000000006").unwrap();
-        let boot = sample_boot_diagnostic();
-        let metadata = RunMetadata::new(
-            run_id.clone(),
-            UnixTimestampV1::from_live(boot.recorded_at),
-            UnixTimestampV1::from_live(boot.session_started_at),
-            "x",
-            None,
-        );
-        let mut capture = RunWriter::create(temp.path(), metadata).unwrap();
-        let run_dir = capture.run_dir().to_path_buf();
-        let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
-        let (ledger_tx, mut ledger_rx) = mpsc::channel::<PublishedTransitionRecord>(4);
-        diag_tx.send(boot).unwrap();
-        ledger_tx.try_send(sample_ledger_row()).unwrap();
-        let mut state = DashboardState::default();
-
-        drain_twin_emissions(&mut diag_rx, &mut ledger_rx, &mut capture, &mut state).unwrap();
-        capture.finish().unwrap();
-
-        let stored = RunReader::open(run_dir).unwrap().load().unwrap();
-        assert_eq!(stored.diagnostics.len(), 1);
-        assert_eq!(stored.ledger.len(), 1);
-        assert_eq!(
-            stored.diagnostics[0].payload.kind,
-            observation::schema::v1::DiagnosticKindV1::Boot
-        );
-        assert_eq!(stored.ledger[0].payload.record_seq, 1);
-        assert_eq!(
-            stored.manifest.session_started_at,
-            stored.diagnostics[0].payload.session_started_at
-        );
-    }
-
-    #[tokio::test]
-    async fn boot_timeout_creates_no_run_directory() {
-        let temp = tempfile::tempdir().unwrap();
-        let (_tx, mut rx) = mpsc::unbounded_channel::<DiagnosticRecord>();
-        let error = require_boot_diagnostic(&mut rx, Duration::from_millis(20))
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("timed out"), "{error}");
-        assert!(
-            temp.path().read_dir().unwrap().next().is_none(),
-            "observation parent must remain empty when boot times out"
-        );
-    }
-
-    #[test]
-    fn capture_finalization_preserves_boot_primary_and_surfaces_lone_finish_error() {
-        let finish_calls = Rc::new(Cell::new(0));
-        let capture = FailingBootCapture {
-            finish_calls: Rc::clone(&finish_calls),
-        };
-        let mut state = DashboardState::default();
-
-        let error =
-            handle_boot_before_terminal(sample_boot_diagnostic(), capture, &mut state).unwrap_err();
-
-        assert_eq!(finish_calls.get(), 1);
-        assert_eq!(error.to_string(), "boot capture failed");
-        assert!(state.latest_diagnostic.is_none());
-
-        let combined = preserve_primary_result(Ok(()), Err(anyhow::anyhow!("finish failed")));
-        assert_eq!(combined.unwrap_err().to_string(), "finish failed");
+        assert!(matches!(
+            state.connection,
+            ConnectionStatus::Connected { .. }
+        ));
+        assert!(matches!(
+            state.latest_diagnostic.as_ref().unwrap().kind,
+            DiagnosticKind::Boot
+        ));
+        let _unused: MemoryLiveSource = source;
     }
 
     fn sample_ledger_row() -> PublishedTransitionRecord {

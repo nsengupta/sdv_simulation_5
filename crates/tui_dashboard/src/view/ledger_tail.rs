@@ -51,6 +51,7 @@ impl Default for LedgerTail {
     }
 }
 
+#[cfg(test)]
 fn is_lifecycle(event: &PublishedFsmEvent) -> bool {
     matches!(
         event,

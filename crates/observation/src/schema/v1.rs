@@ -6,7 +6,9 @@
 //! functions map every live enum variant explicitly; there are no wildcard arms, so a future
 //! live variant fails to compile here rather than being silently dropped or misfiled.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -18,7 +20,8 @@ use common::facade::{
     PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
     PublishedHealthContext, PublishedOperational, PublishedPowertrainContext,
-    PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext, UnixTimestamp,
+    PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext,
+    PublishedWheelRpm, UnixTimestamp,
 };
 use common::fsm::FrontHeadlampIncompleteCause;
 
@@ -661,5 +664,212 @@ fn project_incomplete_cause(
 fn project_operational(operational: &PublishedOperational) -> OperationalV1 {
     match operational {
         PublishedOperational::LightingUnsafe => OperationalV1::LightingUnsafe,
+    }
+}
+
+/// Reconstitute a live diagnostic from an archival/live-wire envelope.
+pub fn diagnostic_from_envelope(
+    env: &StreamEnvelopeV1<DiagnosticPayloadV1>,
+) -> Result<DiagnosticRecord, ObservationError> {
+    Ok(DiagnosticRecord {
+        level: live_diagnostic_level(env.payload.level),
+        source: intern_source(&env.payload.source),
+        kind: live_diagnostic_kind(&env.payload.kind)?,
+        session_started_at: env.payload.session_started_at.to_live(),
+        recorded_at: env.recorded_at.to_live(),
+    })
+}
+
+/// Reconstitute a live ledger record from an archival/live-wire envelope.
+pub fn ledger_from_envelope(
+    env: &StreamEnvelopeV1<LedgerPayloadV1>,
+) -> Result<PublishedTransitionRecord, ObservationError> {
+    Ok(PublishedTransitionRecord {
+        car_identity: env.vehicle_identity.clone(),
+        session_started_at: env.payload.session_started_at.to_live(),
+        record_seq: env.payload.record_seq,
+        recorded_at: env.recorded_at.to_live(),
+        event: live_fsm_event(&env.payload.event),
+        old_state: live_fsm_state(&env.payload.old_state),
+        next_state: live_fsm_state(&env.payload.next_state),
+        old_ctx: live_vehicle_context(&env.payload.old_ctx),
+        current_ctx: live_vehicle_context(&env.payload.current_ctx),
+        actions: env
+            .payload
+            .actions
+            .iter()
+            .map(live_domain_action)
+            .collect(),
+    })
+}
+
+fn intern_source(source: &str) -> &'static str {
+    static CACHE: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let cache = guard.get_or_insert_with(HashMap::new);
+    if let Some(existing) = cache.get(source) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(source.to_owned().into_boxed_str());
+    cache.insert(source.to_owned(), leaked);
+    leaked
+}
+
+fn live_diagnostic_level(level: DiagnosticLevelV1) -> DiagnosticLevel {
+    match level {
+        DiagnosticLevelV1::Info => DiagnosticLevel::Info,
+        DiagnosticLevelV1::Action => DiagnosticLevel::Action,
+        DiagnosticLevelV1::Alert => DiagnosticLevel::Alert,
+        DiagnosticLevelV1::Warning => DiagnosticLevel::Warning,
+        DiagnosticLevelV1::Error => DiagnosticLevel::Error,
+    }
+}
+
+fn live_diagnostic_kind(kind: &DiagnosticKindV1) -> Result<DiagnosticKind, ObservationError> {
+    Ok(match kind {
+        DiagnosticKindV1::Text { text } => DiagnosticKind::Text { text: text.clone() },
+        DiagnosticKindV1::Boot => DiagnosticKind::Boot,
+        DiagnosticKindV1::TimerTick => DiagnosticKind::TimerTick,
+        DiagnosticKindV1::HeadlampActuationUnconfirmed { on, cause } => {
+            DiagnosticKind::HeadlampActuationUnconfirmed {
+                on: *on,
+                cause: live_incomplete_cause_for_diagnostic(*cause),
+            }
+        }
+        DiagnosticKindV1::RainChanged { raining } => DiagnosticKind::RainChanged {
+            raining: *raining,
+        },
+        DiagnosticKindV1::WiperMotionChanged { wiping } => DiagnosticKind::WiperMotionChanged {
+            wiping: *wiping,
+        },
+        DiagnosticKindV1::ActuationFailure { action, error } => DiagnosticKind::ActuationFailure {
+            action: action.clone(),
+            error: error.clone(),
+        },
+        DiagnosticKindV1::TransitionSinkFull => DiagnosticKind::TransitionSinkFull,
+        DiagnosticKindV1::TransitionSinkClosed => DiagnosticKind::TransitionSinkClosed,
+    })
+}
+
+fn live_incomplete_cause_for_diagnostic(
+    cause: FrontHeadlampIncompleteCauseV1,
+) -> FrontHeadlampIncompleteCause {
+    match cause {
+        FrontHeadlampIncompleteCauseV1::TimedOut => FrontHeadlampIncompleteCause::TimedOut,
+        FrontHeadlampIncompleteCauseV1::NegativeAck => FrontHeadlampIncompleteCause::NegativeAck,
+    }
+}
+
+fn live_fsm_event(event: &FsmEventV1) -> PublishedFsmEvent {
+    match event {
+        FsmEventV1::PowerOn => PublishedFsmEvent::PowerOn,
+        FsmEventV1::PowerOff => PublishedFsmEvent::PowerOff,
+        FsmEventV1::UpdateRpm { rpm } => PublishedFsmEvent::UpdateRpm(*rpm),
+        FsmEventV1::UpdateAmbientLux { lux } => PublishedFsmEvent::UpdateAmbientLux(*lux),
+        FsmEventV1::FrontHeadlampOnAck => PublishedFsmEvent::FrontHeadlampOnAck,
+        FsmEventV1::FrontHeadlampOffAck => PublishedFsmEvent::FrontHeadlampOffAck,
+        FsmEventV1::FrontHeadlampActuationIncomplete { direction, cause } => {
+            PublishedFsmEvent::FrontHeadlampActuationIncomplete {
+                direction: live_switch_direction(*direction),
+                cause: live_published_incomplete_cause(*cause),
+            }
+        }
+        FsmEventV1::TimerTick => PublishedFsmEvent::TimerTick,
+        FsmEventV1::Internal { operational } => {
+            PublishedFsmEvent::Internal(live_operational(*operational))
+        }
+    }
+}
+
+fn live_fsm_state(state: &FsmStateV1) -> PublishedFsmState {
+    match state {
+        FsmStateV1::Off => PublishedFsmState::Off,
+        FsmStateV1::PreparingToStart => PublishedFsmState::PreparingToStart,
+        FsmStateV1::Idle => PublishedFsmState::Idle,
+        FsmStateV1::Driving => PublishedFsmState::Driving,
+        FsmStateV1::DrivingDangerously => PublishedFsmState::DrivingDangerously,
+        FsmStateV1::ExtremeOperationWarning { entered_at } => {
+            PublishedFsmState::ExtremeOperationWarning {
+                entered_at: entered_at.to_live(),
+            }
+        }
+        FsmStateV1::PreparingToStop => PublishedFsmState::PreparingToStop,
+    }
+}
+
+fn live_domain_action(action: &DomainActionV1) -> PublishedDomainAction {
+    match action {
+        DomainActionV1::StartBuzzer => PublishedDomainAction::StartBuzzer,
+        DomainActionV1::StopBuzzer => PublishedDomainAction::StopBuzzer,
+        DomainActionV1::PublishStateSync => PublishedDomainAction::PublishStateSync,
+        DomainActionV1::LogWarning { message } => {
+            PublishedDomainAction::LogWarning(message.clone())
+        }
+        DomainActionV1::RequestFrontHeadlampOn => PublishedDomainAction::RequestFrontHeadlampOn,
+        DomainActionV1::RequestFrontHeadlampOff => PublishedDomainAction::RequestFrontHeadlampOff,
+        DomainActionV1::RequestWiperStart => PublishedDomainAction::RequestWiperStart,
+        DomainActionV1::RequestWiperStop => PublishedDomainAction::RequestWiperStop,
+    }
+}
+
+fn live_vehicle_context(ctx: &VehicleContextV1) -> PublishedVehicleContext {
+    PublishedVehicleContext {
+        powertrain: PublishedPowertrainContext {
+            wheel_rpm: PublishedWheelRpm {
+                front_left: ctx.powertrain.wheel_rpm.front_left,
+                front_right: ctx.powertrain.wheel_rpm.front_right,
+                rear_left: ctx.powertrain.wheel_rpm.rear_left,
+                rear_right: ctx.powertrain.wheel_rpm.rear_right,
+            },
+            speed_kph: ctx.powertrain.speed_kph,
+        },
+        health: PublishedHealthContext {
+            fuel_level_pct: ctx.health.fuel_level_pct,
+            oil_pressure_kpa: ctx.health.oil_pressure_kpa,
+            tyre_pressure_ok: ctx.health.tyre_pressure_ok,
+        },
+        visibility: PublishedVisibilityContext {
+            ambient_lux: ctx.visibility.ambient_lux,
+        },
+        headlamp: PublishedHeadlampContext {
+            state: live_headlamp_state(ctx.headlamp.state),
+            ack_pending_since: ctx.headlamp.ack_pending_since.map(|ts| ts.to_live()),
+        },
+    }
+}
+
+fn live_headlamp_state(state: HeadlampStateV1) -> PublishedHeadlampState {
+    match state {
+        HeadlampStateV1::Off => PublishedHeadlampState::Off,
+        HeadlampStateV1::Ready => PublishedHeadlampState::Ready,
+        HeadlampStateV1::OnRequested => PublishedHeadlampState::OnRequested,
+        HeadlampStateV1::On => PublishedHeadlampState::On,
+        HeadlampStateV1::OffRequested => PublishedHeadlampState::OffRequested,
+    }
+}
+
+fn live_switch_direction(
+    direction: FrontHeadlampSwitchDirectionV1,
+) -> PublishedFrontHeadlampSwitchDirection {
+    match direction {
+        FrontHeadlampSwitchDirectionV1::On => PublishedFrontHeadlampSwitchDirection::On,
+        FrontHeadlampSwitchDirectionV1::Off => PublishedFrontHeadlampSwitchDirection::Off,
+    }
+}
+
+fn live_published_incomplete_cause(
+    cause: FrontHeadlampIncompleteCauseV1,
+) -> PublishedFrontHeadlampIncompleteCause {
+    match cause {
+        FrontHeadlampIncompleteCauseV1::TimedOut => PublishedFrontHeadlampIncompleteCause::TimedOut,
+        FrontHeadlampIncompleteCauseV1::NegativeAck => {
+            PublishedFrontHeadlampIncompleteCause::NegativeAck
+        }
+    }
+}
+
+fn live_operational(operational: OperationalV1) -> PublishedOperational {
+    match operational {
+        OperationalV1::LightingUnsafe => PublishedOperational::LightingUnsafe,
     }
 }

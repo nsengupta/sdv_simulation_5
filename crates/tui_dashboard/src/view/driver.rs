@@ -39,24 +39,13 @@ pub fn driver_pane(
         };
     }
 
-    let mut lines = Vec::with_capacity(4);
-    lines.push(PaneLine::plain_fitted(
-        LineRole::Notice,
-        &format_notice(diagnostic),
-        width,
-    ));
-    lines.push(speed_pane_line(ledger, width));
-    lines.push(PaneLine::plain_fitted(
-        LineRole::Visibility,
-        &format_visibility_line(ledger),
-        width,
-    ));
     // TODO(phase-5-follow-up): Twin rain / wiper presentation fields (+ Icon segments).
-    lines.push(PaneLine::plain_fitted(
-        LineRole::Weather,
-        &format_weather_line(),
-        width,
-    ));
+    let lines = vec![
+        PaneLine::plain_fitted(LineRole::Notice, &format_notice(diagnostic), width),
+        speed_pane_line(ledger, width),
+        PaneLine::plain_fitted(LineRole::Visibility, &format_visibility_line(ledger), width),
+        PaneLine::plain_fitted(LineRole::Weather, &format_weather_line(), width),
+    ];
     DriverPane { lines }
 }
 

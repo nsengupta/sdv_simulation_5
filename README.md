@@ -475,18 +475,20 @@ The reference application is **one process, one `main()`**, with two cooperating
 
 Full design: [`DESIGN.md` §16](DESIGN.md#16-twin-lifecycle-install--start--operate--stop--disband). Architecture overview: [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased roadmap: [`docs/PHASES.md`](docs/PHASES.md). Checklist: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md).
 
-> **Note:** The combined `tui_dashboard` app (twin in-process) is **transitional** until [Phase 6](docs/PHASES.md#phase-6--split-gateway-and-dashboard-processes). Phase 5 reworks Dashboard presentation first. The target remains separate Gateway, Dashboard, Emulator, and actuator processes on CAN.
+> **Note:** [Phase 6](docs/PHASES.md#phase-6--split-gateway-and-dashboard-processes) is **Done**:
+> Gateway owns the twin and observation capture; `tui_dashboard` is an observation-only UDS
+> consumer (`./tmp/observation.sock` by default). Zenoh is Phase 9.
 
-### Setup (before the UI loop)
+### Setup (live split)
 
-1. `main()` creates **diagnostic** and **transition** channels (sender + receiver).
-2. `TwinRuntimeBuilder::install_controller()` installs the twin and attaches senders to the actor tree.
-3. `spawn_runtime()` starts the CAN reader, ingress dispatch loop, and actuation publishers.
-4. The dashboard loop holds the receivers and renders the **latest** diagnostic and ledger row each frame.
+1. **Gateway** optionally binds `--uds` under `<cwd>/tmp/`, waits for one Dashboard client, then
+   installs the twin, tees records to `./observations/<run-id>/` and the live socket.
+2. **Dashboard** connects with `--uds`, shows connected status in the footer, applies schema-v2
+   events into the Phase 5 panes.
+3. **Emulator** drives lifecycle and sensors on CAN.
 
 The dashboard **trusts the twin completely** for display. Vehicle operation and **lifecycle**
-(PowerOn/PowerOff) are driven by **emulators and actuators on CAN** — not by dashboard keys
-(**lifecycle owner A**, decided).
+(PowerOn/PowerOff) are driven by **emulators and actuators on CAN** — not by dashboard keys.
 
 ### Twin while `Off` — silent ignore
 
@@ -513,25 +515,27 @@ See [Twin while `Off`](#twin-while-off--silent-ignore). Do not interpret pre-Pow
 
 | Binary | Start | Use |
 |--------|-------|-----|
-| **`tui_dashboard`** | Emulator **PowerOn on CAN** | Interactive observation |
-| **`gateway`** | Auto `PowerOn` on spawn (default) | Headless / CI |
+| **`gateway --uds …`** | Waits for Dashboard, then install; auto `PowerOn` on spawn (default) | Live twin + archive + UDS |
+| **`gateway`** (no `--uds`) | Install immediately; file archive only | Headless / CI |
+| **`tui_dashboard --uds …`** | Connects to Gateway UDS | Interactive observation |
 
 ```bash
-# Dashboard app (install + CAN ingress; waits for lifecycle over CAN)
-cargo run -p tui_dashboard
+cargo run -p gateway -- --uds observation.sock
+cargo run -p tui_dashboard -- --uds observation.sock
 ```
 
-### Quit (`q`) — current limitation
+### Quit (`q`)
 
-Today, **`q` exits the process**, which drops the runtime `JoinHandle` and **stops in-process CAN ingress and twin workers** as a side effect. Emulators and actuators in other terminals keep running on `vcan0`. Explicit Stop / disband before quit (**TL-6**) is not implemented yet.
+**`q` exits the Dashboard only** and closes the UDS link. The Gateway twin keeps running.
+Emulators and actuators in other terminals keep running on `vcan0`. Explicit Gateway Stop /
+disband (**TL-6**, Phase 10) is not implemented yet.
 
 ---
 
 ## How to Run
 
-The finite Phase 2 run uses four processes sharing Linux **SocketCAN** (`vcan0` by default).
-Start them in this order so actuator listeners and the observer-only Dashboard are ready before
-the emulator sends PowerOn and immediate telemetry.
+The live Phase 6 run uses separate Gateway and Dashboard processes sharing Linux **SocketCAN**
+(`vcan0` by default) plus a UDS observation link under `./tmp/`. Start in this order:
 
 ```bash
 # One-time setup (per boot)
@@ -545,19 +549,22 @@ cargo run -p front_headlamp_actuator
 # Terminal 2 — Wiper actuator (CMD in → motor log out; no ACK/NACK)
 cargo run -p wiper_actuator
 
-# Terminal 3 — observer-only Dashboard and in-process twin
-cargo run -p tui_dashboard
+# Terminal 3 — Gateway (sole twin owner; waits for Dashboard on UDS)
+cargo run -p gateway -- --uds observation.sock --observation-dir observations
 # writes ./observations/<uuid>/{manifest.json,diagnostic.jsonl,ledger.jsonl}
 
-# Optional: choose a different parent directory for captured runs
-cargo run -p tui_dashboard -- --observation-dir /tmp/sdv-runs
+# Terminal 4 — observer-only Dashboard (connects; footer shows connection)
+cargo run -p tui_dashboard -- --uds observation.sock
 
-# Terminal 4 — Mode 1 emulator: PowerOn, live ticks, controlled stop
+# Terminal 5 — Mode 1 emulator: PowerOn, live ticks, controlled stop
 EMULATOR_TUNNEL_PROB=0.01 \
 EMULATOR_RAIN_PROB=0.008 \
 cargo run -p emulator -- --readings 30
 # or open-ended until Ctrl+C (emulator process only):
 # cargo run -p emulator
+
+# Automated headless smoke (requires vcan0):
+# ./scripts/smoke-phase6-two-process.sh
 ```
 
 `--readings N` is optional and counts logical telemetry cycles. With `--readings N`, the

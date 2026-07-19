@@ -36,4 +36,6 @@ pub enum ObservationError {
         "record session_started_at {found} does not match manifest session_started_at {expected}"
     )]
     SessionMismatch { expected: String, found: String },
+    #[error("UDS path must be under <cwd>/tmp: {path} ({reason})")]
+    InvalidUdsPath { path: PathBuf, reason: String },
 }

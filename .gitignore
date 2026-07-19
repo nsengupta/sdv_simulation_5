@@ -1,5 +1,6 @@
 /target
 /observations/
+/tmp/
 
 # IntelliJ IDEA IDE files
 .idea/*

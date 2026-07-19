@@ -51,12 +51,12 @@ fn format_state_transition(
         return format!("{old:?} → {new:?}");
     }
 
+    let old = format!("{old:?}");
+    let next = format_next_state(new);
     format!(
         "{DIM}{old}{RESET}{DIM} → {RESET}{next}{RESET}",
         DIM = ansi::DIM,
         RESET = ansi::RESET,
-        old = format!("{old:?}"),
-        next = format_next_state(new),
     )
 }
 
