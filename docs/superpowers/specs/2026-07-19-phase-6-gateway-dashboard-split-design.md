@@ -22,6 +22,7 @@ unchanged. Zenoh is out of scope (Phase 9). Embedded emulator / driver UI is out
 | Live observation link | Unix domain socket (UDS) |
 | Gateway CLI | `--uds <path>` optional (bind + connect-gated install); omit = headless file-only |
 | Dashboard CLI | `--uds <path>` required for live mode (client connect) |
+| UDS location | Always under **`<cwd>/tmp/`** (never system `/tmp`). Default `./tmp/observation.sock` |
 | Wire payloads | Same archival schema v2 JSONL DTOs |
 | Capture | Gateway **tee**: `RunWriter` + live sink |
 | Clients | Single client; no reconnect in Phase 6 |
@@ -175,9 +176,16 @@ Unknown `type` → Dashboard logs and skips (forward-compatible). No `Display`/p
 | `gateway` | `--uds <path>` (optional; omit for headless file-only capture), `--observation-dir <parent>`, `--connect-timeout <secs>` |
 | `tui_dashboard` | `--uds <path>` (required for live mode) |
 
-### 4.3 Socket file hygiene
+### 4.3 UDS path convention and hygiene
 
-Gateway removes a stale socket path when safe to bind; best-effort unlink on clean shutdown.
+- All live sockets live under **`<current working directory>/tmp/`**, not the system
+  `/tmp` directory. Default path: `./tmp/observation.sock`.
+- Gateway creates `<cwd>/tmp` if missing when binding.
+- `--uds` may be a filename (`observation.sock` → `./tmp/observation.sock`) or a path
+  under `./tmp/…`. Paths outside `<cwd>/tmp` are rejected with a clear error.
+- Documented workflows assume both processes are started from the **project root** so they
+  share the same `<cwd>/tmp`.
+- Gateway removes a stale socket path when safe to bind; best-effort unlink on clean shutdown.
 
 ---
 
