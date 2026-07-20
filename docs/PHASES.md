@@ -10,22 +10,22 @@ Overview and target architecture: [`ARCHITECTURE-OVERVIEW.md`](ARCHITECTURE-OVER
 ## Roadmap at a glance
 
 ```text
-Phase 1  CAN lifecycle + silent ignore          ← CAN correctness foundation
-Phase 2  Finite lifecycle + telemetry emulator
-Phase 3  Observation capture library + files
-Phase 4  Emulator session runner (Mode 1); golden/CI TODOs
-Phase 5  Dashboard presentation rework (driver / engineer / ledger tail)
+Phase 1  CAN lifecycle + silent ignore          ← Done
+Phase 2  Finite lifecycle + telemetry emulator ← Done
+Phase 3  Observation capture library + files   ← Done
+Phase 4  Emulator session runner (Mode 1)      ← Done (golden/CI TODOs remain)
+Phase 5  Dashboard presentation rework         ← Done
 Phase 6  Split Gateway ↔ Dashboard processes   ← Done
-Phase 7  (cancelled) Embedded emulator + TUI driver — dropped for this simulation
-Phase 8  Standalone replay — TBD next simulation
-──────── Zenoh / uProtocol boundary ────────
-Phase 9  Transport abstraction (CAN vs Zenoh [+ optional uProtocol])
-Phase 10 Shutdown, disband, polish (TL-6/7/8)
+Phase 7  Embedded emulator + TUI driver        ← Cancelled (this simulation)
+Phase 8  Standalone replay                     ← TBD next simulation
+──────── next: observation over Zenoh ────────
+Phase 9  Live observation: UDS | Zenoh         ← Next (design done; plan next)
+Phase 10 Shutdown, disband, polish (TL-6/7/8)  ← Later
 ```
 
-**Current codebase:** Gateway is the sole twin owner (Phase 6); Dashboard is an observation-only
-UDS consumer. Standalone emulator remains the lifecycle driver. Phase 7 cancelled; Phase 8
-replay TBD next simulation. Next major carrier work is **Phase 9 (Zenoh)**.
+**Where we are:** Phase 6 Done — Gateway sole twin owner + file tee; Dashboard observation-only
+over UDS. Vehicle bus stays **CAN** (`vcan0`). **Next work:** Phase 9 implementation plan →
+implement (Zenoh as alternate live observation carrier). No push unless asked.
 
 ---
 
@@ -338,40 +338,48 @@ the archive that a future replay phase will consume.
 
 ---
 
-## Phase 9 — Transport abstraction: CAN vs Zenoh (+ optional uProtocol) *(next carrier work)*
+## Phase 9 — Live observation transport: UDS | Zenoh *(next)*
 
-**Status:** Not started  
-**Prerequisite:** Phase 6 Done; CAN path remains the default vehicle bus until Zenoh parity exists.
+**Status:** Design approved — **implementation plan next**  
+**Prerequisite:** Phase 6 Done. Vehicle bus remains CAN for this phase.  
+**Design:**
+[`2026-07-20-phase-9-zenoh-observation-design.md`](superpowers/specs/2026-07-20-phase-9-zenoh-observation-design.md)  
+**Related:** Phase 6 design
+[`2026-07-19-phase-6-gateway-dashboard-split-design.md`](superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md)
+(`LiveSink` / `LiveSource` seam).
 
-### Recommended introduction order (observation first)
+**Goal:** Operators choose an explicit live observation carrier — **UDS or Zenoh** — on both
+Gateway and Dashboard. Same schema-v2 observation payloads; file archive tee unchanged.
+Emulator/actuators stay on CAN.
 
-1. **Zenoh router + config** — document local `zenohd` (or peer mode) and keyexpr namespace.
-2. **`ZenohLiveSink` / `ZenohLiveSource`** — implement Phase 6 `LiveSink` / `LiveSource` with the
-   same schema-v2 NDJSON (or length-prefixed) payloads.
-3. **Explicit transport on both binaries (no default)** — `gateway` and `tui_dashboard` each
-   **require** a live-transport flag (e.g. `--transport uds` or `--transport zenoh`). Omitting it
-   is a usage error. Prevents Gateway on UDS + Dashboard on Zenoh (or the reverse) by accident.
-   Transport-specific args follow (`--uds <path>` under `<cwd>/tmp`, or Zenoh config/keyexpr).
-4. **Session features deferred from Phase 6** — multi-subscriber fan-out, reconnect, optional
-   bootstrap/catch-up on join (optional; not day-one).
-5. **Keep CAN for twin ingress/egress** until observation Zenoh is green (emulator/actuators unchanged).
-6. **Optional later:** Zenoh (or Zenoh+uProtocol) for emulator ↔ gateway ↔ actuators; parity
-   tests vs CAN ledger.
-7. **uProtocol (optional layer)** — only if you want Eclipse SDV–aligned service addressing /
-   RPC/pubsub contracts on top of Zenoh; not required to replace UDS observation.
+### Kickoff decisions (locked)
 
-### Scope (when kicked off)
+See design § Kickoff decisions. Summary:
 
-1. Observation live link: Zenoh impl behind existing `LiveSink` / `LiveSource`.
-2. **Required** `--transport uds|zenoh` on **both** `gateway` and `tui_dashboard` (no implicit default).
-3. Document topic/keyexpr map; if uProtocol is adopted, map URIs beside existing CAN IDs.
-4. (Stretch) Shared transport trait for vehicle bus — only after observation Zenoh is stable.
+| Topic | Decision |
+|-------|----------|
+| First Zenoh slice | **Observation only** (Gateway → Dashboard live link) |
+| Vehicle bus | **CAN unchanged** this phase |
+| CLI style | **Mutually exclusive** long flags — **exactly one** required; **no default** |
+| Gateway live flags | `--uds <path>` \| `--zenoh` \| `--no-live` (exactly one) |
+| Dashboard live flags | `--uds <path>` \| `--zenoh` (exactly one; `--no-live` rejected) |
+| UDS path | **Required** with `--uds`; resolve under `<cwd>/tmp` as in Phase 6 |
+| Zenoh keyexpr | **Required** `--keyexpr <expr>` whenever `--zenoh` is set (both binaries) |
+| Help | Both binaries: `-h` / `--help` with concrete example command lines |
+| Zenoh topology (day one) | **Peer sessions** (no `zenohd` required) |
+| Zenoh install gate | **Wait for first subscriber** on `--keyexpr`, then install twin |
+| Wait timeout | Shared **`--connect-timeout <secs>`** (default e.g. 60) |
+| Topic shape | **One** keyexpr; multiplexed schema-v2 `LiveMessage` |
+| Impl approach | `ZenohLiveSink` / `ZenohLiveSource` in `observation` |
+| File capture | Gateway `RunWriter` tee **always** |
+| uProtocol / vehicle-bus Zenoh | Out of this phase |
 
-### Tests (mandatory)
+### Acceptance (when implementation lands)
 
-- [ ] Gateway + Dashboard over Zenoh: boot + ledger events update UI; files still tee’d
-- [ ] (Stretch) Parity: same emulator scenario over CAN-only vehicle bus with UDS vs Zenoh
-      observation produces equivalent archived ledger (modulo timing)
+- Documented command pairs: UDS+UDS, Zenoh+Zenoh, and Gateway `--no-live`
+- No silent defaults; exactly one live-mode flag per process
+- Full emulator session with live Dashboard on Zenoh; CAN remains the bus
+- Implementation plan filed under `docs/superpowers/plans/` before coding
 
 ---
 
@@ -413,4 +421,4 @@ the archive that a future replay phase will consume.
 
 ---
 
-*Last updated: 2026-07-19 — Phase 6 Done; Phase 7 cancelled; Phase 8 TBD next sim; Phase 9 Zenoh next.*
+*Last updated: 2026-07-20 — Phase 9 design approved; implementation plan next.*

@@ -63,20 +63,24 @@ Five **independently runnable** command-line applications share a message carrie
 
 | Carrier | When | Scope |
 |---------|------|--------|
-| **CAN (`vcan0`)** | Phases 1–7 | Emulator ↔ Gateway ↔ Actuators |
+| **CAN (`vcan0`)** | Phases 1–6+ (stays) | Emulator ↔ Gateway ↔ Actuators |
 | **File + UDS** | Phase 6 Done | Gateway observation archive + live Dashboard link |
-| **Zenoh (+ optional uProtocol)** | Phase 9+ | Live observation first; vehicle bus later; uProtocol only if SDV service contracts are a goal |
+| **Zenoh (observation)** | Phase 9 (next) | Alternate live Dashboard link; same schema-v2 payloads; explicit `--uds` / `--zenoh` |
+| **uProtocol** | After Phase 9 if needed | Optional SDV service layer — not required for observation Zenoh |
+| **Zenoh vehicle bus** | Later / stretch | Emulator/actuators off CAN — not Phase 9 |
 
-All binaries that touch the bus today will later gain a **transport abstraction** (CAN vs Zenoh)
-selected by CLI / config. **No Zenoh until CAN path is defect-free.**
+**Phase 9 CLI rule:** mutually exclusive flags — Gateway `--uds` / `--zenoh` / `--no-live`;
+Dashboard `--uds` / `--zenoh` (exactly one each; no default) so live ends cannot silently
+mismatch. Vehicle bus remains CAN.
 
-### 1.2 Dashboard operating modes (future, deferred)
+### 1.2 Dashboard operating modes
 
-| Mode | User action | Behaviour |
-|------|-------------|-----------|
-| **Live + CSV** | Pass a CSV to the embedded emulator | Emulator core replays script → CAN → Gateway → Dashboard shows twin output |
-| **Live + TUI driver** | Use TUI buttons (PowerOn, PowerOff, Drive, Park, …) | Dashboard instructs **embedded emulator core** → CAN → Gateway (dashboard never calls `send_power_on()` on the twin directly) |
-| **Replay** | Pass stored observation files (`run-id`, timestamp) | Dashboard runs **standalone** — no Gateway, no Emulator, no CAN. Renders archived diagnostic + ledger for true **reproducibility**. |
+| Mode | Status | Behaviour |
+|------|--------|-----------|
+| **Live + standalone emulator** | **Current** | Emulator → CAN → Gateway; Dashboard observes via UDS (Phase 6) or Zenoh (Phase 9) |
+| **Live + CSV / embedded emulator** | **Cancelled** (Phase 7) | Not scheduled this simulation |
+| **Live + TUI driver keys** | **Cancelled** (Phase 7) | Not scheduled this simulation |
+| **Replay** | **TBD next simulation** (Phase 8) | Standalone Dashboard from archived run dirs |
 
 ### 1.3 Twin behaviour (unchanged commitments)
 
@@ -107,7 +111,7 @@ simulation. Replay (Phase 8) is **TBD next simulation**. Next carrier work is Ze
 | Aspect | Today | Target |
 |--------|--------|--------|
 | Twin location | **Gateway** process via `TwinRuntimeBuilder` | **Gateway** process only |
-| Dashboard ↔ Twin | Live UDS (`LiveSink`/`LiveSource`, schema v2 NDJSON) under `<cwd>/tmp/` | Same, then Zenoh (Phase 9) |
+| Dashboard ↔ Twin | Live UDS via `LiveSink`/`LiveSource` (schema v2); sockets under `<cwd>/tmp/` | Phase 9: explicit `--uds` or `--zenoh --keyexpr`; Zenoh impl of same traits |
 | Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
 | Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
 | Observation capture | Gateway `ObservationTee` → `RunWriter` (+ optional UDS); Dashboard observation-only | Unchanged file contract; Phase 8 replay from run dirs |
@@ -131,7 +135,7 @@ simulation. Replay (Phase 8) is **TBD next simulation**. Next carrier work is Ze
 | G7 | No E2E observation golden / `observation-compare` yet (Phase 4 delivered emulator session; golden remains TODO) | Later |
 | G8 | Embedded emulator / TUI driver — **dropped** for this simulation | Cancelled (was 7) |
 | G9 | No standalone replay mode | **8** (TBD next simulation) |
-| G10 | Actuators / emulator / gateway locked to CAN; observation still UDS | **9** (Zenoh) |
+| G10 | Observation live link UDS-only; no Zenoh `LiveSink`/`LiveSource` yet | **9** |
 | G11 | No graceful twin disband on Gateway stop (Dashboard `q` no longer tears down twin) | **10** (TL-6/7) |
 
 ---
@@ -195,7 +199,9 @@ streams. Dashboard consumes the live UDS feed only (apply-before-display). See t
 | 2026-07-18 | Twin-authored wall times use a live `UnixTimestamp` (`Duration` since Unix Epoch). Schema v1 stores `{unix_seconds,nanosecond}` objects; summary/UI presentation is `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`. Manifest keeps capture `created_at` and Twin `session_started_at`; Dashboard requires the boot diagnostic before creating a run. |
 | 2026-07-19 | Phase 6: Gateway sole twin owner + capture tee; Dashboard UDS consumer; sockets under `<cwd>/tmp/`; detachable `LiveSink`/`LiveSource`. |
 | 2026-07-19 | Phase 7 embedded emulator/TUI driver **cancelled**; Phase 8 replay **TBD next simulation**; Phase 9 Zenoh is next carrier work (uProtocol optional). |
-| 2026-07-19 | Phase 9 live link: both `gateway` and `tui_dashboard` require explicit `--transport uds|zenoh` (no default) to avoid mixed transports. |
+| 2026-07-19 | Phase 9 live link: both `gateway` and `tui_dashboard` require explicit live-mode flags (no default) to avoid mixed transports. |
+| 2026-07-20 | Phase 9 roadmap: observation-only Zenoh; peer sessions; one keyexpr; uProtocol and vehicle-bus Zenoh out of phase. |
+| 2026-07-20 | Phase 9 design approved: mutually exclusive `--uds` / `--zenoh` / `--no-live` (Gateway); `--uds` / `--zenoh` (Dashboard); required `--keyexpr` with Zenoh; subscriber-wait install gate. See [`2026-07-20-phase-9-zenoh-observation-design.md`](superpowers/specs/2026-07-20-phase-9-zenoh-observation-design.md). |
 
 ---
 
