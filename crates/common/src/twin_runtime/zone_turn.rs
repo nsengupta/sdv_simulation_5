@@ -176,11 +176,13 @@ pub fn zone_turn(
             outcomes.extend(zone_reply.outcomes.into_iter().map(ZoneOutcome::Headlamp));
         }
         FsmEvent::RainsStarted => {
+            next.weather.raining = true;
             let zone_reply = merge_wiper_for_message(ctx, WiperMessage::Start, wiper_ingress);
             next.wiper = zone_reply.ctx;
             outcomes.extend(zone_reply.outcomes.into_iter().map(ZoneOutcome::Wiper));
         }
         FsmEvent::RainsStopped => {
+            next.weather.raining = false;
             let zone_reply = merge_wiper_for_message(ctx, WiperMessage::Stop, wiper_ingress);
             next.wiper = zone_reply.ctx;
             outcomes.extend(zone_reply.outcomes.into_iter().map(ZoneOutcome::Wiper));

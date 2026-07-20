@@ -115,6 +115,24 @@ Required tests (spawn `VirtualCarActor`, exercise the full message loop):
 
 ---
 
+## Important missing TBDs (for final README)
+
+Items operators / maintainers should see in the top-level README “known gaps” list when
+this simulation is wrapped up. Keep this section current; fold into `README.md` at finish.
+
+### Dashboard — Active ROB turns
+
+**Status:** Not started (line removed from Engineer pane; was honest `—`).  
+**Why deferred:** ROB depth lives only in `VirtualCarRuntimeState::barrier_queue`. Dashboard
+sees diagnostics + ledger hops; depth between barrier push and commit is not on those streams.
+Stamping depth only on ledger hops usually shows `0` after drain — wrong for a live counter.  
+**Correct approach (later):** emit on queue change (push/drain) via diagnostic or status fact;
+Engineer pane reads the latched depth. See design discussion in session notes / Phase 5 deferred
+TODOs (`docs/PHASES.md`).  
+**UI target:** `Active ROB turns: N` on the Engineer (State Transitions) pane.
+
+---
+
 ## Dashboard Tokio event loop
 
 **Status:** Deferred after Phase 3.

@@ -4,7 +4,8 @@ use common::facade::{
     DiagnosticKind, DiagnosticLevel, DiagnosticRecord, PublishedDomainAction, PublishedFsmEvent,
     PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
     PublishedPowertrainContext, PublishedTransitionRecord, PublishedVehicleContext,
-    PublishedVisibilityContext, PublishedWheelRpm, UnixTimestamp,
+    PublishedVisibilityContext, PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext,
+    PublishedWiperState, UnixTimestamp,
 };
 
 pub const RUN_ID: &str = "00000000-0000-4000-8000-000000000001";
@@ -59,9 +60,13 @@ pub fn sample_ledger() -> PublishedTransitionRecord {
             tyre_pressure_ok: true,
         },
         visibility: PublishedVisibilityContext { ambient_lux: 20 },
+        weather: PublishedWeatherContext { raining: false },
         headlamp: PublishedHeadlampContext {
             state: PublishedHeadlampState::OnRequested,
             ack_pending_since: Some(ts(SESSION_SECONDS, 750_000_000)),
+        },
+        wiper: PublishedWiperContext {
+            state: PublishedWiperState::Off,
         },
     };
 

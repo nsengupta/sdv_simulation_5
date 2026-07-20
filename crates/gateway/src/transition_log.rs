@@ -109,7 +109,8 @@ mod tests {
         PublishedDomainAction, PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext,
         PublishedHeadlampState, PublishedHealthContext, PublishedPowertrainContext,
         PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext,
-        PublishedWheelRpm, UnixTimestamp,
+        PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext, PublishedWiperState,
+        UnixTimestamp,
     };
     use std::time::Duration;
 
@@ -145,9 +146,13 @@ mod tests {
                 tyre_pressure_ok: true,
             },
             visibility: PublishedVisibilityContext { ambient_lux: 0 },
+            weather: PublishedWeatherContext { raining: false },
             headlamp: PublishedHeadlampContext {
                 state: PublishedHeadlampState::Off,
                 ack_pending_since: None,
+            },
+            wiper: PublishedWiperContext {
+                state: PublishedWiperState::Off,
             },
         }
     }

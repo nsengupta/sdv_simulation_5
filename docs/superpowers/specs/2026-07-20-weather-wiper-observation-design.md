@@ -189,7 +189,7 @@ Speed: […] N/160 km/h
 <blank>
 Visibility: ◼ (120 lux)  Headlamps: On
 <blank>
-Weather: ☁  Wipers: ≋
+Weather: ☁ Raining  Wipers: ≋ moving
 ```
 
 **Visibility ambient bands** (from `common` `LUX_ON_THRESHOLD` / `LUX_OFF_THRESHOLD`):
@@ -211,15 +211,15 @@ Example: `Visibility: ◼ (120 lux)  Headlamps: On`
 | Wipers Off | `x` (ASCII cross) — wiper `Off` or `Ready` |
 | Wipers On | `≋` — wiper `Running` only |
 
-Example: `Weather: ☁  Wipers: ≋`
+Example: `Weather: ☁ Raining  Wipers: ≋ moving` (clear → `☀ Sunny`; wiper idle → `x stopped`).
 
 Implement via `SegmentContent::Icon` (give it a small payload enum); count width with
-`unicode_width`; paint in `main` like `SpeedBar`. Glyph **replaces** rain/wiper words on
-Driver (avoid glyph+text overload). Lux **keeps** the numeric.
+`unicode_width`; paint in `main` like `SpeedBar`. Driver shows **glyph + short text** for
+weather/wiper. Lux **keeps** the numeric.
 
 ### Engineer (text only, full fidelity)
 
-- Weather: `Raining` / `Dry` from `current_ctx.weather.raining`
+- Weather: `Raining` / `Sunny` from `current_ctx.weather.raining`
 - Sub-assembly Wiper: `Off` / `Ready` / `Running` (replace `—`)
 - Last event: real `RainsStarted` / `RainsStopped` once published
 
@@ -246,7 +246,7 @@ Driver (avoid glyph+text overload). Lux **keeps** the numeric.
 - Existing rain↔wiper diagnostic contracts remain green
 - Driver: lux band glyphs, rain glyphs, wiper glyphs; weather line no longer `—`;
   blank spacer lines between Notice / Speed / Visibility / Weather
-- Engineer: wiper full state; weather Raining/Dry text
+- Engineer: wiper full state; weather Raining/Sunny text
 
 ## Out of scope
 

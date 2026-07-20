@@ -21,7 +21,8 @@ use common::facade::{
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
     PublishedHealthContext, PublishedOperational, PublishedPowertrainContext,
     PublishedTransitionRecord, PublishedVehicleContext, PublishedVisibilityContext,
-    PublishedWheelRpm, UnixTimestamp,
+    PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext, PublishedWiperState,
+    UnixTimestamp,
 };
 use common::fsm::FrontHeadlampIncompleteCause;
 
@@ -262,6 +263,8 @@ pub enum FsmEventV1 {
     Internal {
         operational: OperationalV1,
     },
+    RainsStarted,
+    RainsStopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +380,24 @@ pub struct VisibilityContextV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeatherContextV1 {
+    pub raining: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WiperStateV1 {
+    Off,
+    Ready,
+    Running,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WiperContextV1 {
+    pub state: WiperStateV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadlampStateV1 {
     Off,
@@ -397,7 +418,9 @@ pub struct VehicleContextV1 {
     pub powertrain: PowertrainContextV1,
     pub health: HealthContextV1,
     pub visibility: VisibilityContextV1,
+    pub weather: WeatherContextV1,
     pub headlamp: HeadlampContextV1,
+    pub wiper: WiperContextV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -555,6 +578,8 @@ fn project_fsm_event(event: &PublishedFsmEvent) -> FsmEventV1 {
         PublishedFsmEvent::Internal(operational) => FsmEventV1::Internal {
             operational: project_operational(operational),
         },
+        PublishedFsmEvent::RainsStarted => FsmEventV1::RainsStarted,
+        PublishedFsmEvent::RainsStopped => FsmEventV1::RainsStopped,
     }
 }
 
@@ -594,7 +619,21 @@ fn project_vehicle_context(ctx: &PublishedVehicleContext) -> VehicleContextV1 {
         powertrain: project_powertrain_context(&ctx.powertrain),
         health: project_health_context(&ctx.health),
         visibility: project_visibility_context(&ctx.visibility),
+        weather: WeatherContextV1 {
+            raining: ctx.weather.raining,
+        },
         headlamp: project_headlamp_context(&ctx.headlamp),
+        wiper: WiperContextV1 {
+            state: project_wiper_state(ctx.wiper.state),
+        },
+    }
+}
+
+fn project_wiper_state(state: PublishedWiperState) -> WiperStateV1 {
+    match state {
+        PublishedWiperState::Off => WiperStateV1::Off,
+        PublishedWiperState::Ready => WiperStateV1::Ready,
+        PublishedWiperState::Running => WiperStateV1::Running,
     }
 }
 
@@ -778,6 +817,8 @@ fn live_fsm_event(event: &FsmEventV1) -> PublishedFsmEvent {
         FsmEventV1::Internal { operational } => {
             PublishedFsmEvent::Internal(live_operational(*operational))
         }
+        FsmEventV1::RainsStarted => PublishedFsmEvent::RainsStarted,
+        FsmEventV1::RainsStopped => PublishedFsmEvent::RainsStopped,
     }
 }
 
@@ -831,10 +872,24 @@ fn live_vehicle_context(ctx: &VehicleContextV1) -> PublishedVehicleContext {
         visibility: PublishedVisibilityContext {
             ambient_lux: ctx.visibility.ambient_lux,
         },
+        weather: PublishedWeatherContext {
+            raining: ctx.weather.raining,
+        },
         headlamp: PublishedHeadlampContext {
             state: live_headlamp_state(ctx.headlamp.state),
             ack_pending_since: ctx.headlamp.ack_pending_since.map(|ts| ts.to_live()),
         },
+        wiper: PublishedWiperContext {
+            state: live_wiper_state(ctx.wiper.state),
+        },
+    }
+}
+
+fn live_wiper_state(state: WiperStateV1) -> PublishedWiperState {
+    match state {
+        WiperStateV1::Off => PublishedWiperState::Off,
+        WiperStateV1::Ready => PublishedWiperState::Ready,
+        WiperStateV1::Running => PublishedWiperState::Running,
     }
 }
 

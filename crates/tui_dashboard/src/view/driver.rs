@@ -1,7 +1,10 @@
-use super::{MISSING, LineRole, PaneLine, Segment, SegmentContent, SegmentStyle};
+use super::{
+    MISSING, DriverIcon, LineRole, PaneLine, Segment, SegmentContent, SegmentStyle,
+};
 use common::DiagnosticRecord;
 use common::facade::{
     DiagnosticKind, DiagnosticLevel, PublishedHeadlampState, PublishedTransitionRecord,
+    PublishedWiperState,
 };
 use common::fsm::FrontHeadlampIncompleteCause;
 use common::vehicle_physics::{
@@ -39,24 +42,46 @@ pub fn driver_pane(
         };
     }
 
-    // TODO(phase-5-follow-up): Twin rain / wiper presentation fields (+ Icon segments).
     let lines = vec![
-        PaneLine::plain_fitted(LineRole::Notice, &format_notice(diagnostic), width),
+        PaneLine::spacer(width),
+        PaneLine::spacer(width),
+        notice_pane_line(diagnostic, width),
+        PaneLine::spacer(width),
         speed_pane_line(ledger, width),
-        PaneLine::plain_fitted(LineRole::Visibility, &format_visibility_line(ledger), width),
-        PaneLine::plain_fitted(LineRole::Weather, &format_weather_line(), width),
+        PaneLine::spacer(width),
+        visibility_pane_line(ledger, width),
+        PaneLine::spacer(width),
+        weather_pane_line(ledger, width),
     ];
     DriverPane { lines }
 }
 
-fn format_notice(diagnostic: Option<&DiagnosticRecord>) -> String {
+fn notice_pane_line(diagnostic: Option<&DiagnosticRecord>, width: usize) -> PaneLine {
+    let body = format_notice_body(diagnostic);
+    let line = PaneLine {
+        role: LineRole::Notice,
+        segments: vec![
+            Segment {
+                style: SegmentStyle::Label,
+                content: SegmentContent::Text("Notice: ".to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Text(body),
+            },
+        ],
+    };
+    fit_or_pad(line, width)
+}
+
+fn format_notice_body(diagnostic: Option<&DiagnosticRecord>) -> String {
     let Some(d) = diagnostic else {
-        return "Notice: (no notice yet)".to_owned();
+        return "(no notice yet)".to_owned();
     };
     match &d.kind {
-        DiagnosticKind::TimerTick => "Notice: (no notice yet)".to_owned(),
+        DiagnosticKind::TimerTick => "(no notice yet)".to_owned(),
         DiagnosticKind::Boot => {
-            format!("Notice: {} — Twin booting", format_level(d.level))
+            format!("{} — Twin booting", format_level(d.level))
         }
         DiagnosticKind::HeadlampActuationUnconfirmed { on, cause } => {
             let dir = if *on { "ON" } else { "OFF" };
@@ -66,42 +91,36 @@ fn format_notice(diagnostic: Option<&DiagnosticRecord>) -> String {
                 _ => "unconfirmed",
             };
             format!(
-                "Notice: {} — Headlamp {dir} not confirmed ({why})",
+                "{} — Headlamp {dir} not confirmed ({why})",
                 format_level(d.level)
             )
         }
         DiagnosticKind::RainChanged { raining } => format!(
-            "Notice: {} — Rain {}",
+            "{} — Rain {}",
             format_level(d.level),
             if *raining { "detected" } else { "cleared" }
         ),
         DiagnosticKind::WiperMotionChanged { wiping } => format!(
-            "Notice: {} — Wipers {}",
+            "{} — Wipers {}",
             format_level(d.level),
             if *wiping { "active" } else { "stopped" }
         ),
         DiagnosticKind::ActuationFailure { action, error } => format!(
-            "Notice: {} — Actuation failure ({action}: {error})",
+            "{} — Actuation failure ({action}: {error})",
             format_level(d.level)
         ),
         DiagnosticKind::TransitionSinkFull => {
-            format!(
-                "Notice: {} — Transition sink full",
-                format_level(d.level)
-            )
+            format!("{} — Transition sink full", format_level(d.level))
         }
         DiagnosticKind::TransitionSinkClosed => {
-            format!(
-                "Notice: {} — Transition sink closed",
-                format_level(d.level)
-            )
+            format!("{} — Transition sink closed", format_level(d.level))
         }
         DiagnosticKind::Text { text } => {
             let msg = driver_facing_text(text);
             if msg == "Must be IDLE before POWER-OFF" {
-                format!("Notice: {msg}")
+                msg
             } else {
-                format!("Notice: {} — {msg}", format_level(d.level))
+                format!("{} — {msg}", format_level(d.level))
             }
         }
     }
@@ -136,14 +155,28 @@ fn format_level(level: DiagnosticLevel) -> &'static str {
 
 fn speed_pane_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> PaneLine {
     let Some(row) = ledger else {
-        return PaneLine::plain_fitted(LineRole::Speed, &format!("Speed: {MISSING}"), width);
+        let line = PaneLine {
+            role: LineRole::Speed,
+            segments: vec![
+                Segment {
+                    style: SegmentStyle::Label,
+                    content: SegmentContent::Text("Speed: ".to_owned()),
+                },
+                Segment {
+                    style: SegmentStyle::Default,
+                    content: SegmentContent::Text(MISSING.to_owned()),
+                },
+            ],
+        };
+        return fit_or_pad(line, width);
     };
     let speed = row.current_ctx.powertrain.speed_kph;
     let band = speed_band(speed);
     let suffix_body = format!("{speed}/{SPEED_EXTREME_OPERATION_THRESHOLD_KPH} km/h");
-    let prefix = "Speed: [";
+    let label = "Speed: ";
+    let open = "[";
     let mid = "] ";
-    let overhead = prefix.width() + mid.width() + suffix_body.width();
+    let overhead = label.width() + open.width() + mid.width() + suffix_body.width();
     let bar_width = width.saturating_sub(overhead);
     let cells = speed_bar_cells(speed, bar_width);
 
@@ -151,8 +184,12 @@ fn speed_pane_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> 
         role: LineRole::Speed,
         segments: vec![
             Segment {
+                style: SegmentStyle::Label,
+                content: SegmentContent::Text(label.to_owned()),
+            },
+            Segment {
                 style: SegmentStyle::Default,
-                content: SegmentContent::Text(prefix.to_owned()),
+                content: SegmentContent::Text(open.to_owned()),
             },
             Segment {
                 style: SegmentStyle::Default,
@@ -171,20 +208,122 @@ fn speed_pane_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> 
     line.pad_to_width(width)
 }
 
-fn format_visibility_line(ledger: Option<&PublishedTransitionRecord>) -> String {
+fn visibility_pane_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> PaneLine {
     let Some(row) = ledger else {
-        return format!("Visibility: ({MISSING})  Headlamps: {MISSING}");
+        let line = PaneLine {
+            role: LineRole::Visibility,
+            segments: vec![
+                Segment {
+                    style: SegmentStyle::Label,
+                    content: SegmentContent::Text("Visibility: ".to_owned()),
+                },
+                Segment {
+                    style: SegmentStyle::Default,
+                    content: SegmentContent::Text(format!("({MISSING})  Headlamps: {MISSING}")),
+                },
+            ],
+        };
+        return fit_or_pad(line, width);
     };
     let lux = row.current_ctx.visibility.ambient_lux;
+    let lux_icon = DriverIcon::for_ambient_lux(lux);
     let mut headlamps = format_headlamp_state(row.current_ctx.headlamp.state).to_owned();
     if row.current_ctx.headlamp.ack_pending_since.is_some() {
         headlamps.push_str("; waiting for reply");
     }
-    format!("Visibility: ({lux} lux)  Headlamps: {headlamps}")
+    let line = PaneLine {
+        role: LineRole::Visibility,
+        segments: vec![
+            Segment {
+                style: SegmentStyle::Label,
+                content: SegmentContent::Text("Visibility: ".to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Icon(lux_icon),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Text(format!(" ({lux} lux)  Headlamps: {headlamps}")),
+            },
+        ],
+    };
+    fit_or_pad(line, width)
 }
 
-fn format_weather_line() -> String {
-    format!("Rain: {MISSING}  Wipers: {MISSING}")
+fn weather_pane_line(ledger: Option<&PublishedTransitionRecord>, width: usize) -> PaneLine {
+    let Some(row) = ledger else {
+        let line = PaneLine {
+            role: LineRole::Weather,
+            segments: vec![
+                Segment {
+                    style: SegmentStyle::Label,
+                    content: SegmentContent::Text("Weather: ".to_owned()),
+                },
+                Segment {
+                    style: SegmentStyle::Default,
+                    content: SegmentContent::Text(format!("{MISSING}  ")),
+                },
+                Segment {
+                    style: SegmentStyle::Label,
+                    content: SegmentContent::Text("Wipers: ".to_owned()),
+                },
+                Segment {
+                    style: SegmentStyle::Default,
+                    content: SegmentContent::Text(MISSING.to_owned()),
+                },
+            ],
+        };
+        return fit_or_pad(line, width);
+    };
+    let (rain_icon, rain_text) = if row.current_ctx.weather.raining {
+        (DriverIcon::Raining, " Raining")
+    } else {
+        (DriverIcon::Dry, " Sunny")
+    };
+    let (wiper_icon, wiper_text) = match row.current_ctx.wiper.state {
+        PublishedWiperState::Running => (DriverIcon::WiperOn, " moving"),
+        PublishedWiperState::Off | PublishedWiperState::Ready => (DriverIcon::WiperOff, " stopped"),
+    };
+    let line = PaneLine {
+        role: LineRole::Weather,
+        segments: vec![
+            Segment {
+                style: SegmentStyle::Label,
+                content: SegmentContent::Text("Weather: ".to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Icon(rain_icon),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Text(rain_text.to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::Label,
+                content: SegmentContent::Text("  Wipers: ".to_owned()),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Icon(wiper_icon),
+            },
+            Segment {
+                style: SegmentStyle::Default,
+                content: SegmentContent::Text(wiper_text.to_owned()),
+            },
+        ],
+    };
+    fit_or_pad(line, width)
+}
+
+/// Pad when short; if over width, fall back to clipped plain text (glyphs stay as characters).
+fn fit_or_pad(line: PaneLine, width: usize) -> PaneLine {
+    if line.display_width() <= width {
+        line.pad_to_width(width)
+    } else {
+        PaneLine::plain_fitted(line.role, &line.text(), width)
+    }
 }
 
 fn format_headlamp_state(state: PublishedHeadlampState) -> &'static str {
@@ -203,7 +342,8 @@ mod tests {
     use common::facade::{
         PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHealthContext,
         PublishedPowertrainContext, PublishedVehicleContext, PublishedVisibilityContext,
-        PublishedWheelRpm, UnixTimestamp,
+        PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext, PublishedWiperState,
+        UnixTimestamp,
     };
     use common::vehicle_physics::SpeedBand;
     use std::time::Duration;
@@ -256,9 +396,13 @@ mod tests {
             visibility: PublishedVisibilityContext {
                 ambient_lux: lux,
             },
+            weather: PublishedWeatherContext { raining: false },
             headlamp: PublishedHeadlampContext {
                 state: headlamp,
                 ack_pending_since: None,
+            },
+            wiper: PublishedWiperContext {
+                state: PublishedWiperState::Off,
             },
         }
     }
@@ -270,21 +414,27 @@ mod tests {
         });
         let ledger = sample_ledger(80, 150, PublishedHeadlampState::On);
         let pane = driver_pane(Some(&diag), Some(&ledger), 48);
-        assert_eq!(pane.lines[0].role, LineRole::Notice);
-        assert!(pane.lines[0].text().contains("Notice: Warning"));
-        assert!(pane.lines[0].text().contains("tunnel ahead"));
-        let speed_line = pane.lines[1].text();
-        assert!(speed_line.starts_with("Speed: ["));
-        assert!(speed_line.contains("80/160 km/h"));
-        assert!(speed_line.contains('|'));
-        assert_eq!(pane.lines[1].role, LineRole::Speed);
+        let notice = pane.lines.iter().find(|l| l.role == LineRole::Notice).unwrap();
+        assert!(notice.text().contains("Notice: Warning"));
+        assert!(notice.text().contains("tunnel ahead"));
+        assert!(
+            notice
+                .segments
+                .iter()
+                .any(|s| matches!(&s.content, SegmentContent::Text(t) if t == "Notice: ")
+                    && s.style == SegmentStyle::Label)
+        );
+        let speed_line = pane.lines.iter().find(|l| l.role == LineRole::Speed).unwrap();
+        assert!(speed_line.text().starts_with("Speed: ["));
+        assert!(speed_line.text().contains("80/160 km/h"));
+        assert!(speed_line.text().contains('|'));
     }
 
     #[test]
     fn speed_line_zones_and_numeric_band_style() {
         let ledger = sample_ledger(155, 0, PublishedHeadlampState::Off);
         let pane = driver_pane(None, Some(&ledger), 64);
-        let speed = &pane.lines[1];
+        let speed = pane.lines.iter().find(|l| l.role == LineRole::Speed).unwrap();
         let bar = speed
             .segments
             .iter()
@@ -307,7 +457,7 @@ mod tests {
                 .segments
                 .iter()
                 .any(|s| matches!(&s.content, SegmentContent::Text(t) if t.starts_with("Speed:"))
-                    && s.style == SegmentStyle::Default)
+                    && s.style == SegmentStyle::Label)
         );
     }
 
@@ -319,7 +469,12 @@ mod tests {
         });
         let ledger = sample_ledger(0, 100, PublishedHeadlampState::Ready);
         let pane = driver_pane(Some(&diag), Some(&ledger), 80);
-        let notice = pane.lines[0].text();
+        let notice = pane
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::Notice)
+            .unwrap()
+            .text();
         let notice = notice.trim_end();
         assert!(notice.contains("not confirmed"));
         assert!(notice.contains("timeout"));
@@ -346,13 +501,10 @@ mod tests {
         });
         let ledger = sample_ledger(0, 100, PublishedHeadlampState::Off);
         let pane = driver_pane(Some(&diag), Some(&ledger), 60);
-        assert!(
-            pane.lines[0]
-                .text()
-                .starts_with("Notice: Must be IDLE before POWER-OFF")
-        );
-        assert!(!pane.lines[0].text().contains("My-Opel"));
-        assert!(!pane.lines[0].text().contains("REJECTED"));
+        let notice = pane.lines.iter().find(|l| l.role == LineRole::Notice).unwrap();
+        assert!(notice.text().starts_with("Notice: Must be IDLE before POWER-OFF"));
+        assert!(!notice.text().contains("My-Opel"));
+        assert!(!notice.text().contains("REJECTED"));
     }
 
     #[test]
@@ -362,26 +514,76 @@ mod tests {
         let line = pane
             .lines
             .iter()
-            .find(|l| l.text().contains("Visibility:"))
+            .find(|l| l.role == LineRole::Visibility)
             .expect("visibility line");
-        assert!(line.text().contains("Visibility: (150 lux)"));
+        assert!(line.text().contains("Visibility:"));
+        assert!(line.text().contains("150 lux"));
         assert!(line.text().contains("Headlamps: On"));
+        assert!(line.text().contains('◼')); // dark band
     }
 
     #[test]
-    fn driver_rain_and_wipers_share_a_placeholder_line() {
-        let diag = sample_diag(DiagnosticKind::Text {
-            text: "ok".into(),
-        });
-        let ledger = sample_ledger(10, 800, PublishedHeadlampState::Off);
-        let pane = driver_pane(Some(&diag), Some(&ledger), 40);
-        let line = pane
+    fn driver_weather_line_uses_glyphs_from_ledger() {
+        let mut ledger = sample_ledger(10, 100, PublishedHeadlampState::Off);
+        ledger.current_ctx.weather.raining = true;
+        ledger.current_ctx.wiper.state = PublishedWiperState::Running;
+        let pane = driver_pane(None, Some(&ledger), 64);
+        let weather = pane
             .lines
             .iter()
-            .find(|l| l.text().contains("Rain:"))
-            .expect("weather line");
-        assert!(line.text().contains("Rain: —"));
-        assert!(line.text().contains("Wipers: —"));
+            .find(|l| l.role == LineRole::Weather)
+            .unwrap();
+        assert!(weather.text().contains('☁'));
+        assert!(weather.text().contains("Raining"));
+        assert!(weather.text().contains('≋'));
+        assert!(weather.text().contains("moving"));
+        assert!(!weather.text().contains('—'));
+    }
+
+    #[test]
+    fn driver_weather_line_dry_and_wipers_stopped() {
+        let ledger = sample_ledger(10, 100, PublishedHeadlampState::Off);
+        let pane = driver_pane(None, Some(&ledger), 64);
+        let weather = pane
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::Weather)
+            .unwrap();
+        assert!(weather.text().contains('☀'));
+        assert!(weather.text().contains("Sunny"));
+        assert!(weather.text().contains('x'));
+        assert!(weather.text().contains("stopped"));
+    }
+
+    #[test]
+    fn driver_inserts_blank_spacers_between_segments() {
+        let ledger = sample_ledger(10, 100, PublishedHeadlampState::Off);
+        let pane = driver_pane(None, Some(&ledger), 64);
+        let roles: Vec<_> = pane.lines.iter().map(|l| l.role).collect();
+        // Two blank lines before Notice for top padding.
+        assert_eq!(roles[0], LineRole::Spacer);
+        assert_eq!(roles[1], LineRole::Spacer);
+        assert_eq!(roles[2], LineRole::Notice);
+        assert!(roles.windows(2).any(|w| w[0] == LineRole::Notice && w[1] == LineRole::Spacer));
+        assert!(roles.windows(2).any(|w| w[0] == LineRole::Speed && w[1] == LineRole::Spacer));
+        assert!(
+            roles
+                .windows(2)
+                .any(|w| w[0] == LineRole::Visibility && w[1] == LineRole::Spacer)
+        );
+    }
+
+    #[test]
+    fn driver_visibility_lux_band_glyph() {
+        let ledger = sample_ledger(10, 100, PublishedHeadlampState::On);
+        let pane = driver_pane(None, Some(&ledger), 64);
+        let vis = pane
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::Visibility)
+            .unwrap();
+        assert!(vis.text().contains('◼'));
+        assert!(vis.text().contains("100 lux"));
     }
 
     #[test]
@@ -410,7 +612,16 @@ mod tests {
             Some(&sample_ledger(120, 0, PublishedHeadlampState::Off)),
             width,
         );
-        let count = |line: &PaneLine| line.text().chars().filter(|c| *c == '|').count();
-        assert!(count(&high.lines[1]) > count(&low.lines[1]));
+        let count = |pane: &DriverPane| {
+            pane.lines
+                .iter()
+                .find(|l| l.role == LineRole::Speed)
+                .unwrap()
+                .text()
+                .chars()
+                .filter(|c| *c == '|')
+                .count()
+        };
+        assert!(count(&high) > count(&low));
     }
 }

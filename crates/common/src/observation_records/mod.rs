@@ -23,5 +23,6 @@ pub use transition::{
     PublishedFrontHeadlampSwitchDirection, PublishedFsmEvent, PublishedFsmState,
     PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
     PublishedPowertrainContext, PublishedTransitionRecord, PublishedVehicleContext,
-    PublishedVisibilityContext, PublishedWheelRpm, SessionClock,
+    PublishedVisibilityContext, PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext,
+    PublishedWiperState, SessionClock,
 };

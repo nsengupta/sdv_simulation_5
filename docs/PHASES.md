@@ -234,8 +234,8 @@ Layout: [`assets/Dashboard-format.txt`](../assets/Dashboard-format.txt).
 
 Diagnostics emit structured [`DiagnosticKind`](superpowers/specs/2026-07-18-structured-diagnostics-design.md)
 facts (no icons in payloads). Observer Notice filters the stream (e.g. hides `TimerTick`;
-headlamp happy-path ACK is zone/context only). Observation archive schema version is **2**
-(`kind` tagged union). Gateway ingress ACK `println!` is opt-in and off under Dashboard.
+headlamp happy-path ACK is zone/context only). Observation archive schema version is **3**
+(`kind` tagged union; weather + wiper on ledger context; real rain events). Gateway ingress ACK `println!` is opt-in and off under Dashboard.
 
 ### Follow-up (still Phase 5; before Phase 6 — phases 6+ unchanged)
 
@@ -252,15 +252,17 @@ Plan tasks: [`2026-07-18-phase-5-dashboard-presentation.md`](superpowers/plans/2
   (green `0..=100`, yellow `101..=150`, red `>=151`; full scale =
   `SPEED_EXTREME_OPERATION_THRESHOLD_KPH`). Empty cells stay `.`. Label `Speed:` Default;
   numeric `N/160 km/h` uses current-band colour. Ledger `>` stays Default for now.
-- [ ] Heads-up (same model, not required to close the follow-up): visibility swatch
-  (e.g. low brown / high bright yellow), weather glyph (rain cloud / clear day) when Twin
-  fields exist; Notice colour tokens later.
+- [x] Heads-up (partial): ambient lux band glyphs (`◼`/`▦`/`◻`) + weather/wiper glyphs
+  (`☀`/`☁`, `x`/`≋`) from published Twin fields; blank spacers between Driver segments.
+  Coloured visibility `Swatch` and Notice colour tokens remain later.
 
 ### Deferred TODOs (not required for Phase 5 Done or follow-up gate)
 
-- Twin fields: rain, wiper status on Dashboard lines, ROB depth, assembly actors (after live use)
-- Colour / Ratatui icons on filtered Notice lines (beyond speed zones)
-- Process split (Phase 6)
+- Twin rain + wiper on Dashboard lines: **done** — see
+  [`2026-07-20-weather-wiper-observation-design.md`](superpowers/specs/2026-07-20-weather-wiper-observation-design.md)
+- Still deferred: **Active ROB turns** on Engineer pane (see
+  [`TODO-simulation-5.md`](TODO-simulation-5.md) § Important missing TBDs), richer
+  assembly-actor detail, coloured visibility `Swatch`, Notice colour tokens
 - Zone-encased headlamp unconfirmed (TODO on `DiagnosticKind`)
 
 ### Tests (mandatory)
@@ -351,12 +353,12 @@ the archive that a future replay phase will consume.
 (`LiveSink` / `LiveSource` seam).
 
 **Goal:** Operators choose an explicit live observation carrier — **UDS or Zenoh** — on both
-Gateway and Dashboard. Same schema-v2 observation payloads; file archive tee unchanged.
+Gateway and Dashboard. Same schema-v3 observation payloads; file archive tee unchanged.
 Emulator/actuators stay on CAN.
 
 ### Delivered
 
-1. `ZenohLiveSink` / `ZenohLiveSource` in `observation` (peer sessions; one keyexpr; schema-v2 NDJSON).
+1. `ZenohLiveSink` / `ZenohLiveSource` in `observation` (peer sessions; one keyexpr; schema NDJSON — now **v3**).
 2. Gateway CLI: exactly one of `--uds <path>` | `--zenoh --keyexpr <expr>` | `--no-live`.
 3. Dashboard CLI: exactly one of `--uds <path>` | `--zenoh --keyexpr <expr>` (no default; no `--no-live`).
 4. Zenoh install gate waits for first matching subscriber (`matching_listener`); shared `--connect-timeout`.

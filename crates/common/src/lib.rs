@@ -49,8 +49,8 @@ pub use observation_records::{
     PublishedFrontHeadlampIncompleteCause, PublishedFrontHeadlampSwitchDirection,
     PublishedFsmEvent, PublishedFsmState, PublishedHeadlampContext, PublishedHeadlampState,
     PublishedHealthContext, PublishedPowertrainContext, PublishedTransitionRecord,
-    PublishedVehicleContext, PublishedVisibilityContext, PublishedWheelRpm, SessionClock,
-    elapsed_since_session,
+    PublishedVehicleContext, PublishedVisibilityContext, PublishedWeatherContext, PublishedWheelRpm,
+    PublishedWiperContext, PublishedWiperState, SessionClock, elapsed_since_session,
 };
 pub use signals::{LifecycleCommand, VssSignal};
 pub use twin_runtime::connectors::{IngressToFsmProjector, ProjectionError, Projector};

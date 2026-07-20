@@ -51,14 +51,14 @@ fn manifest_schema_version_mismatch_is_rejected() {
     let temp = tempfile::tempdir().unwrap();
     let run_dir = write_fixture(temp.path());
     mutate_json_file(&run_dir.join("manifest.json"), |value| {
-        value["schema_version"] = serde_json::json!(3);
+        value["schema_version"] = serde_json::json!(4);
     });
 
     let error = RunReader::open(&run_dir).unwrap_err();
     match error {
         ObservationError::UnsupportedSchema { found, supported } => {
-            assert_eq!(found, 3);
-            assert_eq!(supported, 2);
+            assert_eq!(found, 4);
+            assert_eq!(supported, 3);
         }
         other => panic!("expected UnsupportedSchema, got {other:?}"),
     }
@@ -88,15 +88,15 @@ fn diagnostic_row_schema_version_mismatch_is_rejected() {
     let temp = tempfile::tempdir().unwrap();
     let run_dir = write_fixture(temp.path());
     mutate_jsonl_line(&run_dir.join("diagnostic.jsonl"), 1, |value| {
-        value["schema_version"] = serde_json::json!(3);
+        value["schema_version"] = serde_json::json!(4);
     });
 
     let reader = RunReader::open(&run_dir).unwrap();
     let error = reader.diagnostics().unwrap().next().unwrap().unwrap_err();
     match error {
         ObservationError::UnsupportedSchema { found, supported } => {
-            assert_eq!(found, 3);
-            assert_eq!(supported, 2);
+            assert_eq!(found, 4);
+            assert_eq!(supported, 3);
         }
         other => panic!("expected UnsupportedSchema, got {other:?}"),
     }

@@ -428,7 +428,10 @@ fn pane_line_to_ratatui(line: PaneLine) -> Line<'static> {
                     spans.push(Span::styled(ch, style));
                 }
             }
-            SegmentContent::Swatch | SegmentContent::Icon => {}
+            SegmentContent::Swatch => {}
+            SegmentContent::Icon(icon) => {
+                spans.push(Span::styled(icon.as_str().to_owned(), segment_style(seg.style)));
+            }
         }
     }
     Line::from(spans)
@@ -438,6 +441,7 @@ fn segment_style(token: SegmentStyle) -> Style {
     match token {
         SegmentStyle::Default => Style::default(),
         SegmentStyle::Mute => Style::default().fg(Color::DarkGray),
+        SegmentStyle::Label => Style::default().fg(Color::Cyan),
         SegmentStyle::ZoneGreen => Style::default().fg(Color::Green),
         SegmentStyle::ZoneYellow => Style::default().fg(Color::Yellow),
         SegmentStyle::ZoneRed => Style::default().fg(Color::Red),
@@ -781,7 +785,7 @@ mod tests {
         use common::facade::{
             PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
             PublishedPowertrainContext, PublishedVehicleContext, PublishedVisibilityContext,
-            PublishedWheelRpm,
+            PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext, PublishedWiperState,
         };
         PublishedVehicleContext {
             powertrain: PublishedPowertrainContext {
@@ -799,9 +803,13 @@ mod tests {
                 tyre_pressure_ok: true,
             },
             visibility: PublishedVisibilityContext { ambient_lux: 0 },
+            weather: PublishedWeatherContext { raining: false },
             headlamp: PublishedHeadlampContext {
                 state: PublishedHeadlampState::Off,
                 ack_pending_since: None,
+            },
+            wiper: PublishedWiperContext {
+                state: PublishedWiperState::Off,
             },
         }
     }

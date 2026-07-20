@@ -115,7 +115,8 @@ mod tests {
     use common::facade::{
         PublishedHeadlampContext, PublishedHeadlampState, PublishedHealthContext,
         PublishedPowertrainContext, PublishedVehicleContext, PublishedVisibilityContext,
-        PublishedWheelRpm, UnixTimestamp,
+        PublishedWeatherContext, PublishedWheelRpm, PublishedWiperContext, PublishedWiperState,
+        UnixTimestamp,
     };
     use std::time::Duration;
     use unicode_width::UnicodeWidthStr;
@@ -152,9 +153,13 @@ mod tests {
                 tyre_pressure_ok: true,
             },
             visibility: PublishedVisibilityContext { ambient_lux: 0 },
+            weather: PublishedWeatherContext { raining: false },
             headlamp: PublishedHeadlampContext {
                 state: PublishedHeadlampState::Off,
                 ack_pending_since: None,
+            },
+            wiper: PublishedWiperContext {
+                state: PublishedWiperState::Off,
             },
         }
     }

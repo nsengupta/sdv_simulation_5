@@ -29,6 +29,7 @@ use crate::fsm::{DomainAction, FsmEvent, FsmState, RawTransitionRecord};
 use crate::vehicle_state::{
     FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection, HeadlampContext, HeadlampState,
     PowertrainContext, VehicleContext, VehicleHealthContext, VisibilityContext, WheelRpm,
+    WiperState,
 };
 
 /// Wall-clock instant since the Unix Epoch, for Twin-authored observation records.
@@ -186,6 +187,8 @@ pub enum PublishedFsmEvent {
     },
     TimerTick,
     Internal(PublishedOperational),
+    RainsStarted,
+    RainsStopped,
 }
 
 impl From<&FsmEvent> for PublishedFsmEvent {
@@ -205,12 +208,10 @@ impl From<&FsmEvent> for PublishedFsmEvent {
             }
             FsmEvent::TimerTick => Self::TimerTick,
             FsmEvent::Internal(op) => Self::Internal(op.into()),
-            // AssemblyZoneReady, RainsStarted, RainsStopped are internal coordination or
-            // zone-only events with no published representation; map to TimerTick as a
-            // neutral placeholder — the FSM state change is captured in the ledger state.
-            FsmEvent::AssemblyZoneReady(_) | FsmEvent::RainsStarted | FsmEvent::RainsStopped => {
-                Self::TimerTick
-            }
+            FsmEvent::RainsStarted => Self::RainsStarted,
+            FsmEvent::RainsStopped => Self::RainsStopped,
+            // AssemblyZoneReady remains unpublished; map to TimerTick as a neutral placeholder.
+            FsmEvent::AssemblyZoneReady(_) => Self::TimerTick,
         }
     }
 }
@@ -342,6 +343,50 @@ impl From<&VisibilityContext> for PublishedVisibilityContext {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishedWeatherContext {
+    pub raining: bool,
+}
+
+impl From<&crate::vehicle_state::WeatherContext> for PublishedWeatherContext {
+    fn from(w: &crate::vehicle_state::WeatherContext) -> Self {
+        Self {
+            raining: w.raining,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishedWiperState {
+    Off,
+    Ready,
+    Running,
+}
+
+impl From<&WiperState> for PublishedWiperState {
+    fn from(s: &WiperState) -> Self {
+        match s {
+            WiperState::Off => Self::Off,
+            WiperState::Ready => Self::Ready,
+            WiperState::Running => Self::Running,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishedWiperContext {
+    pub state: PublishedWiperState,
+}
+
+impl From<&crate::vehicle_state::WiperContext> for PublishedWiperContext {
+    fn from(w: &crate::vehicle_state::WiperContext) -> Self {
+        Self {
+            state: (&w.state).into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PublishedHeadlampContext {
     pub state: PublishedHeadlampState,
@@ -363,16 +408,20 @@ pub struct PublishedVehicleContext {
     pub powertrain: PublishedPowertrainContext,
     pub health: PublishedHealthContext,
     pub visibility: PublishedVisibilityContext,
+    pub weather: PublishedWeatherContext,
     pub headlamp: PublishedHeadlampContext,
+    pub wiper: PublishedWiperContext,
 }
 
 impl PublishedVehicleContext {
-    fn project(ctx: &VehicleContext, clock: &SessionClock) -> Self {
+    pub(crate) fn project(ctx: &VehicleContext, clock: &SessionClock) -> Self {
         Self {
             powertrain: (&ctx.powertrain).into(),
             health: (&ctx.health).into(),
             visibility: (&ctx.visibility).into(),
+            weather: (&ctx.weather).into(),
             headlamp: PublishedHeadlampContext::project(&ctx.headlamp, clock),
+            wiper: (&ctx.wiper).into(),
         }
     }
 }
@@ -459,5 +508,34 @@ mod unix_timestamp_tests {
             later.saturating_duration_since(earlier),
             Duration::from_nanos(1)
         );
+    }
+}
+
+#[cfg(test)]
+mod published_projection_tests {
+    use super::*;
+    use crate::vehicle_state::{VehicleContext, WiperState};
+
+    #[test]
+    fn published_fsm_event_keeps_rain_variants() {
+        assert_eq!(
+            PublishedFsmEvent::from(&FsmEvent::RainsStarted),
+            PublishedFsmEvent::RainsStarted
+        );
+        assert_eq!(
+            PublishedFsmEvent::from(&FsmEvent::RainsStopped),
+            PublishedFsmEvent::RainsStopped
+        );
+    }
+
+    #[test]
+    fn published_vehicle_context_includes_weather_and_wiper() {
+        let clock = SessionClock::capture();
+        let mut ctx = VehicleContext::default();
+        ctx.weather.raining = true;
+        ctx.wiper.state = WiperState::Running;
+        let pub_ctx = PublishedVehicleContext::project(&ctx, &clock);
+        assert!(pub_ctx.weather.raining);
+        assert_eq!(pub_ctx.wiper.state, PublishedWiperState::Running);
     }
 }

@@ -65,7 +65,7 @@ Five **independently runnable** command-line applications share a message carrie
 |---------|------|--------|
 | **CAN (`vcan0`)** | Phases 1–6+ (stays) | Emulator ↔ Gateway ↔ Actuators |
 | **File + UDS** | Phase 6 Done | Gateway observation archive + live Dashboard link |
-| **Zenoh (observation)** | Phase 9 Done | Alternate live Dashboard link; same schema-v2 payloads; explicit `--uds` / `--zenoh` |
+| **Zenoh (observation)** | Phase 9 Done | Alternate live Dashboard link; schema-v3 payloads; explicit `--uds` / `--zenoh` |
 | **uProtocol** | After Phase 9 if needed | Optional SDV service layer — not required for observation Zenoh |
 | **Zenoh vehicle bus** | Later / stretch | Emulator/actuators off CAN — not Phase 9 |
 
@@ -112,7 +112,7 @@ simulation**. Next lifecycle work is shutdown/disband (Phase 10).
 | Aspect | Today | Target |
 |--------|--------|--------|
 | Twin location | **Gateway** process via `TwinRuntimeBuilder` | **Gateway** process only |
-| Dashboard ↔ Twin | Explicit `--uds` or `--zenoh --keyexpr` via `LiveSink`/`LiveSource` (schema v2) | Same; vehicle-bus Zenoh / uProtocol later |
+| Dashboard ↔ Twin | Explicit `--uds` or `--zenoh --keyexpr` via `LiveSink`/`LiveSource` (schema v3) | Same; vehicle-bus Zenoh / uProtocol later |
 | Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
 | Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
 | Observation capture | Gateway `ObservationTee` → `RunWriter` (+ optional UDS); Dashboard observation-only | Unchanged file contract; Phase 8 replay from run dirs |

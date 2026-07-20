@@ -1,7 +1,9 @@
 //! Structured pane lines (semantic styles; no Ratatui).
 
 use super::fit_line;
-use common::vehicle_physics::{SpeedBand, SpeedBarCell};
+use common::vehicle_physics::{
+    LUX_OFF_THRESHOLD, LUX_ON_THRESHOLD, SpeedBand, SpeedBarCell,
+};
 use unicode_width::UnicodeWidthStr;
 
 /// Stable identity of a pane row (whole-line policy later).
@@ -14,10 +16,11 @@ pub enum LineRole {
     Weather,
     EngineerState,
     EngineerEvent,
-    EngineerRob,
     EngineerHeading,
     EngineerAssembly,
     LedgerRow,
+    /// Blank vertical rhythm between Driver segments (presentation only).
+    Spacer,
 }
 
 /// Semantic style token — mapped to Ratatui colours only in `main`.
@@ -25,6 +28,8 @@ pub enum LineRole {
 pub enum SegmentStyle {
     Default,
     Mute,
+    /// Driver field labels (Notice / Speed / Visibility / Weather).
+    Label,
     ZoneGreen,
     ZoneYellow,
     ZoneRed,
@@ -40,17 +45,51 @@ impl SegmentStyle {
     }
 }
 
+/// Driver glyph vocabulary (not on the wire — presentation only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverIcon {
+    LuxDark,
+    LuxHold,
+    LuxBright,
+    Dry,
+    Raining,
+    WiperOff,
+    WiperOn,
+}
+
+impl DriverIcon {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LuxDark => "◼",
+            Self::LuxHold => "▦",
+            Self::LuxBright => "◻",
+            Self::Dry => "☀",
+            Self::Raining => "☁",
+            Self::WiperOff => "x",
+            Self::WiperOn => "≋",
+        }
+    }
+
+    pub fn for_ambient_lux(lux: u16) -> Self {
+        if lux <= LUX_ON_THRESHOLD {
+            Self::LuxDark
+        } else if lux >= LUX_OFF_THRESHOLD {
+            Self::LuxBright
+        } else {
+            Self::LuxHold
+        }
+    }
+}
+
 /// Inline content for one segment of a [`PaneLine`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SegmentContent {
     Text(String),
     SpeedBar { cells: Vec<SpeedBarCell> },
-    /// Reserved: visibility low/high boxes (not emitted yet).
+    /// Reserved: coloured visibility boxes (not emitted yet).
     #[allow(dead_code)]
     Swatch,
-    /// Reserved: weather glyphs (not emitted yet).
-    #[allow(dead_code)]
-    Icon,
+    Icon(DriverIcon),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +119,17 @@ impl PaneLine {
         Self::plain(role, fit_line(text, width))
     }
 
+    /// Blank spacer row occupying `width` columns.
+    pub fn spacer(width: usize) -> Self {
+        Self {
+            role: LineRole::Spacer,
+            segments: vec![Segment {
+                style: SegmentStyle::Mute,
+                content: SegmentContent::Text(" ".repeat(width)),
+            }],
+        }
+    }
+
     /// Flatten to a single string (tests / width checks).
     pub fn text(&self) -> String {
         let mut out = String::new();
@@ -91,7 +141,8 @@ impl PaneLine {
                         out.push(if c.filled { '|' } else { '.' });
                     }
                 }
-                SegmentContent::Swatch | SegmentContent::Icon => {}
+                SegmentContent::Swatch => {}
+                SegmentContent::Icon(icon) => out.push_str(icon.as_str()),
             }
         }
         out
