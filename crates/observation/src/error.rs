@@ -38,4 +38,6 @@ pub enum ObservationError {
     SessionMismatch { expected: String, found: String },
     #[error("UDS path must be under <cwd>/tmp: {path} ({reason})")]
     InvalidUdsPath { path: PathBuf, reason: String },
+    #[error("zenoh: {message}")]
+    Zenoh { message: String },
 }

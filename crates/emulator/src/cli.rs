@@ -1,6 +1,18 @@
 use anyhow::{Context, Result, bail};
 use std::num::NonZeroUsize;
 
+const USAGE: &str = "\
+usage: emulator [--readings <positive integer>]
+       [-h|--help]
+
+Drive lifecycle and live telemetry onto vcan0 (PowerOn first, then ticks).
+Omit --readings to run until Ctrl+C.
+
+examples:
+  cargo run -p emulator -- --readings 30
+  cargo run -p emulator
+";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmulatorArgs {
     pub readings: Option<NonZeroUsize>,
@@ -22,11 +34,14 @@ where
         .into_iter()
         .map(|value| value.as_ref().to_string())
         .collect();
+    if values.iter().any(|v| v == "-h" || v == "--help") {
+        bail!("{USAGE}");
+    }
     if values.is_empty() {
         return Ok(EmulatorArgs { readings: None });
     }
     if values.len() != 2 || values[0] != "--readings" {
-        bail!("usage: emulator [--readings <positive integer>]");
+        bail!("{USAGE}");
     }
     let parsed = values[1]
         .parse::<usize>()
@@ -81,6 +96,15 @@ mod tests {
         assert!(parse_args(["--readings", "30", "extra"]).is_err());
         assert!(parse_args(["--readings"]).is_err());
         assert!(parse_args(["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn help_flag_prints_usage_and_examples() {
+        let err = parse_args(["--help"]).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("--readings"));
+        assert!(text.contains("cargo run -p emulator"));
+        assert!(parse_args(["-h"]).is_err());
     }
 
     #[test]

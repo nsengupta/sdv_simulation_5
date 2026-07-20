@@ -1,4 +1,4 @@
-//! Gateway command-line parsing for observation capture and optional live UDS.
+//! Gateway command-line parsing for observation capture and exclusive live modes.
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -9,10 +9,30 @@ use observation::{resolve_uds_path, DEFAULT_UDS_FILE_NAME};
 
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
 
+const USAGE: &str = "\
+usage: gateway --uds <path> | --zenoh --keyexpr <expr> | --no-live
+       [--observation-dir <dir>] [--connect-timeout <secs>]
+       [--print-transitions-only] [--trace-actuation-ingress]
+       [-h|--help]
+
+Exactly one live mode is required (no default).
+
+examples:
+  cargo run -p gateway -- --uds observation.sock --connect-timeout 60
+  cargo run -p gateway -- --zenoh --keyexpr sdv/twin/observation --connect-timeout 60
+  cargo run -p gateway -- --no-live --observation-dir observations
+";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatewayLiveMode {
+    Uds(PathBuf),
+    Zenoh { keyexpr: String },
+    NoLive,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayArgs {
-    /// When set, bind/accept a live Dashboard before install (resolved under `<cwd>/tmp`).
-    pub uds: Option<PathBuf>,
+    pub live: GatewayLiveMode,
     pub observation_dir: PathBuf,
     pub connect_timeout: Duration,
     pub print_transitions_only: bool,
@@ -26,6 +46,9 @@ where
 {
     let values: Vec<OsString> = args.into_iter().map(|v| v.as_ref().to_owned()).collect();
     let mut uds: Option<PathBuf> = None;
+    let mut zenoh = false;
+    let mut no_live = false;
+    let mut keyexpr: Option<String> = None;
     let mut observation_dir = PathBuf::from("observations");
     let mut connect_timeout_secs = DEFAULT_CONNECT_TIMEOUT_SECS;
     let mut print_transitions_only = false;
@@ -33,15 +56,42 @@ where
     let mut i = 0;
     while i < values.len() {
         let arg = values[i].as_os_str();
-        if arg == OsStr::new("--uds") {
+        if arg == OsStr::new("-h") || arg == OsStr::new("--help") {
+            bail!("{USAGE}");
+        } else if arg == OsStr::new("--uds") {
             i += 1;
             let Some(path) = values.get(i) else {
-                bail!("usage: gateway [--uds <path>] [--observation-dir <dir>] [--connect-timeout <secs>]");
+                bail!("{USAGE}");
             };
             if path.is_empty() {
                 bail!("--uds requires a non-empty path");
             }
+            if uds.is_some() || zenoh || no_live {
+                bail!("{USAGE}");
+            }
             uds = Some(PathBuf::from(path));
+        } else if arg == OsStr::new("--zenoh") {
+            if uds.is_some() || zenoh || no_live {
+                bail!("{USAGE}");
+            }
+            zenoh = true;
+        } else if arg == OsStr::new("--no-live") {
+            if uds.is_some() || zenoh || no_live {
+                bail!("{USAGE}");
+            }
+            no_live = true;
+        } else if arg == OsStr::new("--keyexpr") {
+            i += 1;
+            let Some(raw) = values.get(i) else {
+                bail!("{USAGE}");
+            };
+            if raw.is_empty() {
+                bail!("--keyexpr requires a non-empty expression");
+            }
+            if keyexpr.is_some() {
+                bail!("{USAGE}");
+            }
+            keyexpr = Some(raw.to_string_lossy().into_owned());
         } else if arg == OsStr::new("--observation-dir") {
             i += 1;
             let Some(path) = values.get(i) else {
@@ -65,22 +115,48 @@ where
         } else if arg == OsStr::new("--trace-actuation-ingress") {
             trace_actuation_ingress = true;
         } else {
-            bail!(
-                "usage: gateway [--uds <path>] [--observation-dir <dir>] [--connect-timeout <secs>] [--print-transitions-only] [--trace-actuation-ingress]"
-            );
+            bail!("{USAGE}");
         }
         i += 1;
     }
 
-    let uds = match uds {
-        None => None,
-        Some(path) => Some(
-            resolve_uds_path(Some(&path)).map_err(|err| anyhow::anyhow!(err))?,
-        ),
+    // Ledger-only mode does not require a live-mode flag.
+    if print_transitions_only && uds.is_none() && !zenoh && !no_live {
+        return Ok(GatewayArgs {
+            live: GatewayLiveMode::NoLive,
+            observation_dir,
+            connect_timeout: Duration::from_secs(connect_timeout_secs),
+            print_transitions_only,
+            trace_actuation_ingress,
+        });
+    }
+
+    let live = match (uds, zenoh, no_live) {
+        (Some(path), false, false) => {
+            if keyexpr.is_some() {
+                bail!("{USAGE}");
+            }
+            GatewayLiveMode::Uds(
+                resolve_uds_path(Some(&path)).map_err(|err| anyhow::anyhow!(err))?,
+            )
+        }
+        (None, true, false) => {
+            let Some(keyexpr) = keyexpr.filter(|k| !k.is_empty()) else {
+                bail!("{USAGE}");
+            };
+            GatewayLiveMode::Zenoh { keyexpr }
+        }
+        (None, false, true) => {
+            if keyexpr.is_some() {
+                bail!("{USAGE}");
+            }
+            GatewayLiveMode::NoLive
+        }
+        _ => bail!("{USAGE}"),
     };
 
     Ok(GatewayArgs {
-        uds,
+        live,
         observation_dir,
         connect_timeout: Duration::from_secs(connect_timeout_secs),
         print_transitions_only,
@@ -122,12 +198,38 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_headless_file_capture() {
-        let args = parse_args(std::iter::empty::<&str>()).unwrap();
-        assert_eq!(args.uds, None);
-        assert_eq!(args.observation_dir, PathBuf::from("observations"));
-        assert_eq!(args.connect_timeout, Duration::from_secs(60));
-        assert!(!args.print_transitions_only);
+    fn requires_exactly_one_live_mode() {
+        assert!(parse_args(std::iter::empty::<&str>()).is_err());
+        assert!(parse_args(["--uds", "observation.sock", "--no-live"]).is_err());
+        assert!(parse_args(["--zenoh"]).is_err());
+        assert!(parse_args(["--zenoh", "--keyexpr", ""]).is_err());
+    }
+
+    #[test]
+    fn accepts_no_live() {
+        let args = parse_args(["--no-live"]).unwrap();
+        assert_eq!(args.live, GatewayLiveMode::NoLive);
+    }
+
+    #[test]
+    fn accepts_zenoh_with_keyexpr() {
+        let args = parse_args(["--zenoh", "--keyexpr", "sdv/twin/observation"]).unwrap();
+        assert_eq!(
+            args.live,
+            GatewayLiveMode::Zenoh {
+                keyexpr: "sdv/twin/observation".into()
+            }
+        );
+    }
+
+    #[test]
+    fn help_flag_prints_examples() {
+        let err = parse_args(["--help"]).unwrap_err();
+        let text = err.to_string();
+        assert!(text.contains("--uds"));
+        assert!(text.contains("--zenoh"));
+        assert!(text.contains("--no-live"));
+        assert!(text.contains("sdv/twin/observation"));
     }
 
     #[test]
@@ -136,8 +238,8 @@ mod tests {
         let _guard = CwdGuard::enter(dir.path());
         let args = parse_args(["--uds", "observation.sock"]).unwrap();
         assert_eq!(
-            args.uds.as_deref(),
-            Some(dir.path().join("tmp").join("observation.sock").as_path())
+            args.live,
+            GatewayLiveMode::Uds(dir.path().join("tmp").join("observation.sock"))
         );
     }
 

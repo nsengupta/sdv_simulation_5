@@ -18,14 +18,14 @@ Phase 5  Dashboard presentation rework         ← Done
 Phase 6  Split Gateway ↔ Dashboard processes   ← Done
 Phase 7  Embedded emulator + TUI driver        ← Cancelled (this simulation)
 Phase 8  Standalone replay                     ← TBD next simulation
-──────── next: observation over Zenoh ────────
-Phase 9  Live observation: UDS | Zenoh         ← Next (design done; plan next)
+Phase 9  Live observation: UDS | Zenoh         ← Done
+──────── next: shutdown / disband ────────
 Phase 10 Shutdown, disband, polish (TL-6/7/8)  ← Later
 ```
 
-**Where we are:** Phase 6 Done — Gateway sole twin owner + file tee; Dashboard observation-only
-over UDS. Vehicle bus stays **CAN** (`vcan0`). **Next work:** Phase 9 implementation plan →
-implement (Zenoh as alternate live observation carrier). No push unless asked.
+**Where we are:** Phase 9 Done — Gateway/Dashboard choose explicit live carrier (**UDS or peer
+Zenoh**); file tee unchanged; vehicle bus stays **CAN** (`vcan0`). **Next work:** Phase 10
+(shutdown / disband). No push unless asked.
 
 ---
 
@@ -338,12 +338,14 @@ the archive that a future replay phase will consume.
 
 ---
 
-## Phase 9 — Live observation transport: UDS | Zenoh *(next)*
+## Phase 9 — Live observation transport: UDS | Zenoh
 
-**Status:** Design approved — **implementation plan next**  
+**Status:** Done  
 **Prerequisite:** Phase 6 Done. Vehicle bus remains CAN for this phase.  
 **Design:**
 [`2026-07-20-phase-9-zenoh-observation-design.md`](superpowers/specs/2026-07-20-phase-9-zenoh-observation-design.md)  
+**Plan:**
+[`2026-07-20-phase-9-zenoh-observation.md`](superpowers/plans/2026-07-20-phase-9-zenoh-observation.md)  
 **Related:** Phase 6 design
 [`2026-07-19-phase-6-gateway-dashboard-split-design.md`](superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md)
 (`LiveSink` / `LiveSource` seam).
@@ -352,34 +354,22 @@ the archive that a future replay phase will consume.
 Gateway and Dashboard. Same schema-v2 observation payloads; file archive tee unchanged.
 Emulator/actuators stay on CAN.
 
-### Kickoff decisions (locked)
+### Delivered
 
-See design § Kickoff decisions. Summary:
+1. `ZenohLiveSink` / `ZenohLiveSource` in `observation` (peer sessions; one keyexpr; schema-v2 NDJSON).
+2. Gateway CLI: exactly one of `--uds <path>` | `--zenoh --keyexpr <expr>` | `--no-live`.
+3. Dashboard CLI: exactly one of `--uds <path>` | `--zenoh --keyexpr <expr>` (no default; no `--no-live`).
+4. Zenoh install gate waits for first matching subscriber (`matching_listener`); shared `--connect-timeout`.
+5. `-h` / `--help` examples on both binaries; footer shows UDS path or `zenoh:<keyexpr>`.
+6. Tests: CLI, `live_zenoh_roundtrip`, `observation_tee_zenoh`, UDS regressions; smoke
+   [`scripts/smoke-phase9-zenoh-peer.sh`](../scripts/smoke-phase9-zenoh-peer.sh).
 
-| Topic | Decision |
-|-------|----------|
-| First Zenoh slice | **Observation only** (Gateway → Dashboard live link) |
-| Vehicle bus | **CAN unchanged** this phase |
-| CLI style | **Mutually exclusive** long flags — **exactly one** required; **no default** |
-| Gateway live flags | `--uds <path>` \| `--zenoh` \| `--no-live` (exactly one) |
-| Dashboard live flags | `--uds <path>` \| `--zenoh` (exactly one; `--no-live` rejected) |
-| UDS path | **Required** with `--uds`; resolve under `<cwd>/tmp` as in Phase 6 |
-| Zenoh keyexpr | **Required** `--keyexpr <expr>` whenever `--zenoh` is set (both binaries) |
-| Help | Both binaries: `-h` / `--help` with concrete example command lines |
-| Zenoh topology (day one) | **Peer sessions** (no `zenohd` required) |
-| Zenoh install gate | **Wait for first subscriber** on `--keyexpr`, then install twin |
-| Wait timeout | Shared **`--connect-timeout <secs>`** (default e.g. 60) |
-| Topic shape | **One** keyexpr; multiplexed schema-v2 `LiveMessage` |
-| Impl approach | `ZenohLiveSink` / `ZenohLiveSource` in `observation` |
-| File capture | Gateway `RunWriter` tee **always** |
-| uProtocol / vehicle-bus Zenoh | Out of this phase |
+### Out of scope (unchanged)
 
-### Acceptance (when implementation lands)
-
-- Documented command pairs: UDS+UDS, Zenoh+Zenoh, and Gateway `--no-live`
-- No silent defaults; exactly one live-mode flag per process
-- Full emulator session with live Dashboard on Zenoh; CAN remains the bus
-- Implementation plan filed under `docs/superpowers/plans/` before coding
+- Zenoh / uProtocol for vehicle bus
+- Required `zenohd`
+- Multi-subscriber fan-out, reconnect, bootstrap
+- Phase 8 replay
 
 ---
 
@@ -421,4 +411,4 @@ See design § Kickoff decisions. Summary:
 
 ---
 
-*Last updated: 2026-07-20 — Phase 9 design approved; implementation plan next.*
+*Last updated: 2026-07-20 — Phase 9 Done (UDS | Zenoh live observation).*

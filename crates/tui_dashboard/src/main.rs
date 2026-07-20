@@ -1,11 +1,10 @@
-//! Observation-only Dashboard: connects to Gateway over UDS and renders twin emissions.
+//! Observation-only Dashboard: connects to Gateway over UDS or Zenoh and renders twin emissions.
 //!
 //! Lifecycle (PowerOn/PowerOff) remains emulator-driven over CAN. Only **`q`** / Esc quit the TUI.
 
 mod cli;
 mod view;
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -16,8 +15,8 @@ use crossterm::terminal::{
 };
 use crossterm::ExecutableCommand;
 use observation::{
-    LiveMessage, LiveRecordDto, LiveStream, UdsLiveSource, diagnostic_from_envelope,
-    ledger_from_envelope,
+    AnyLiveSource, LiveMessage, LiveRecordDto, LiveStream, UdsLiveSource, ZenohLiveSource,
+    diagnostic_from_envelope, ledger_from_envelope,
 };
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -37,7 +36,7 @@ type DashboardTerminal = Terminal<ratatui::backend::CrosstermBackend<std::io::St
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum ConnectionStatus {
-    Connected { uds: PathBuf },
+    Connected { detail: String },
     #[default]
     Disconnected,
 }
@@ -63,14 +62,18 @@ impl Default for DashboardState {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = cli::parse_args(std::env::args_os().skip(1))?;
-    let mut source = UdsLiveSource::connect(&args.uds)
+    let detail = match &args.live {
+        cli::DashboardLiveMode::Uds(path) => path.display().to_string(),
+        cli::DashboardLiveMode::Zenoh { keyexpr } => format!("zenoh:{keyexpr}"),
+    };
+    let mut source = open_live_source(&args.live)
         .await
-        .with_context(|| format!("connect to Gateway UDS {}", args.uds.display()))?;
+        .with_context(|| format!("connect live source ({detail})"))?;
 
     let hello = tokio::time::timeout(BOOT_DIAGNOSTIC_WAIT, source.recv())
         .await
         .context("timed out waiting for hello from Gateway")?
-        .context("UDS closed before hello")?
+        .context("live link closed before hello")?
         .context("empty hello")?;
     match hello {
         LiveMessage::Hello { .. } => {}
@@ -79,7 +82,7 @@ async fn main() -> Result<()> {
 
     let mut state = DashboardState {
         connection: ConnectionStatus::Connected {
-            uds: args.uds.clone(),
+            detail: detail.clone(),
         },
         ..DashboardState::default()
     };
@@ -96,8 +99,23 @@ async fn main() -> Result<()> {
     run_dashboard(live_rx, status_rx, state).await
 }
 
+async fn open_live_source(live: &cli::DashboardLiveMode) -> Result<AnyLiveSource> {
+    match live {
+        cli::DashboardLiveMode::Uds(path) => Ok(AnyLiveSource::Uds(
+            UdsLiveSource::connect(path)
+                .await
+                .with_context(|| format!("UDS connect {}", path.display()))?,
+        )),
+        cli::DashboardLiveMode::Zenoh { keyexpr } => Ok(AnyLiveSource::Zenoh(
+            ZenohLiveSource::subscribe(keyexpr.clone())
+                .await
+                .with_context(|| format!("Zenoh subscribe {keyexpr}"))?,
+        )),
+    }
+}
+
 async fn forward_live_source(
-    mut source: UdsLiveSource,
+    mut source: AnyLiveSource,
     live_tx: mpsc::UnboundedSender<LiveMessage>,
     status_tx: mpsc::UnboundedSender<ConnectionStatus>,
 ) {
@@ -121,14 +139,14 @@ async fn forward_live_source(
 }
 
 async fn require_boot_from_source(
-    source: &mut UdsLiveSource,
+    source: &mut AnyLiveSource,
     wait: Duration,
 ) -> Result<DiagnosticRecord> {
     let deadline = tokio::time::Instant::now() + wait;
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            bail!("timed out waiting for Twin boot diagnostic over UDS");
+            bail!("timed out waiting for Twin boot diagnostic over live link");
         }
         match tokio::time::timeout(remaining, source.recv()).await {
             Ok(Ok(Some(LiveMessage::Event {
@@ -142,9 +160,9 @@ async fn require_boot_from_source(
                 // Non-boot diagnostics before boot are unexpected; keep waiting.
             }
             Ok(Ok(Some(_))) => continue,
-            Ok(Ok(None)) => bail!("UDS closed before boot diagnostic"),
+            Ok(Ok(None)) => bail!("live link closed before boot diagnostic"),
             Ok(Err(err)) => return Err(err.into()),
-            Err(_) => bail!("timed out waiting for Twin boot diagnostic over UDS"),
+            Err(_) => bail!("timed out waiting for Twin boot diagnostic over live link"),
         }
     }
 }
@@ -280,8 +298,8 @@ async fn run_ui_loop(
 
 fn format_keys_footer(connection: &ConnectionStatus) -> String {
     match connection {
-        ConnectionStatus::Connected { uds } => {
-            format!("Connected to twin via {} | Keys: 'q' quit", uds.display())
+        ConnectionStatus::Connected { detail } => {
+            format!("Connected to twin via {detail} | Keys: 'q' quit")
         }
         ConnectionStatus::Disconnected => "Disconnected from twin | Keys: 'q' quit".to_string(),
     }
@@ -618,12 +636,16 @@ mod tests {
 
     #[test]
     fn keys_footer_shows_connected_and_disconnected() {
-        let connected = format_keys_footer(&ConnectionStatus::Connected {
-            uds: PathBuf::from("./tmp/observation.sock"),
+        let uds = format_keys_footer(&ConnectionStatus::Connected {
+            detail: "./tmp/observation.sock".into(),
         });
-        assert!(connected.contains("Connected to twin via"));
-        assert!(connected.contains("./tmp/observation.sock"));
-        assert!(connected.contains("Keys: 'q' quit"));
+        assert!(uds.contains("Connected to twin via ./tmp/observation.sock"));
+        assert!(uds.contains("Keys: 'q' quit"));
+
+        let zenoh = format_keys_footer(&ConnectionStatus::Connected {
+            detail: "zenoh:sdv/twin/observation".into(),
+        });
+        assert!(zenoh.contains("zenoh:sdv/twin/observation"));
 
         let disconnected = format_keys_footer(&ConnectionStatus::Disconnected);
         assert!(disconnected.starts_with("Disconnected from twin"));
@@ -693,7 +715,7 @@ mod tests {
         let (mut sink, mut source) = MemoryLiveLink::pair();
         let mut state = DashboardState {
             connection: ConnectionStatus::Connected {
-                uds: PathBuf::from("./tmp/observation.sock"),
+                detail: "./tmp/observation.sock".into(),
             },
             ..DashboardState::default()
         };

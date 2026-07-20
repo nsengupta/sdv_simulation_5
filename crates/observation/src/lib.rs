@@ -9,8 +9,9 @@ mod writer;
 
 pub use error::ObservationError;
 pub use live::{
-    LiveMessage, LiveRecordDto, LiveSink, LiveSource, LiveStream, MemoryLiveLink, MemoryLiveSink,
-    MemoryLiveSource, UdsLiveSink, UdsLiveSource,
+    AnyLiveSink, AnyLiveSource, LiveMessage, LiveRecordDto, LiveSink, LiveSource, LiveStream,
+    MemoryLiveLink, MemoryLiveSink, MemoryLiveSource, UdsLiveSink, UdsLiveSource, ZenohLiveSink,
+    ZenohLiveSource,
 };
 pub use reader::{DiagnosticRecords, LedgerRecords, RunReader, StoredRun};
 pub use schema::v1::{

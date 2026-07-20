@@ -1,7 +1,7 @@
 # Phase 9 — Live observation transport: UDS | Zenoh
 
 **Date:** 2026-07-20  
-**Status:** Approved (design dialogue)  
+**Status:** Implemented (Phase 9 Done)  
 **Related:** [`docs/PHASES.md`](../../PHASES.md) § Phase 9,
 [`docs/ARCHITECTURE-OVERVIEW.md`](../../ARCHITECTURE-OVERVIEW.md),
 [Phase 6 Gateway/Dashboard split](2026-07-19-phase-6-gateway-dashboard-split-design.md)

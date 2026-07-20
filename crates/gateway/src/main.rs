@@ -6,10 +6,13 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use common::DiagnosticKind;
 use common::facade::{DiagnosticRecord, PublishedTransitionRecord};
-use observation::{LiveMessage, ObservationTee, RunId, RunMetadata, UdsLiveSink, UnixTimestampV1};
+use observation::{
+    AnyLiveSink, LiveMessage, ObservationTee, RunId, RunMetadata, UdsLiveSink, UnixTimestampV1,
+    ZenohLiveSink,
+};
 use tokio::sync::mpsc;
 
-use gateway::cli::{self, GatewayArgs};
+use gateway::cli::{self, GatewayArgs, GatewayLiveMode};
 use gateway::gateway_runtime::{self, TwinRuntimeBuilder};
 use gateway::transition_log;
 
@@ -60,23 +63,39 @@ async fn run_with_capture(args: GatewayArgs) -> Result<()> {
         .with_diagnostic_channel(diag_tx)
         .with_transition_channel(trans_tx);
 
-    let live_sink = if let Some(uds_path) = args.uds.clone() {
-        eprintln!(
-            "[gateway] waiting for Dashboard on {} (timeout {:?})",
-            uds_path.display(),
-            args.connect_timeout
-        );
-        Some(
-            UdsLiveSink::bind_and_accept(
-                uds_path,
-                args.connect_timeout,
-                LiveMessage::hello(VIRTUAL_CAR_IDENTITY),
-            )
-            .await
-            .context("UDS accept / hello")?,
-        )
-    } else {
-        None
+    let live_sink: Option<AnyLiveSink> = match &args.live {
+        GatewayLiveMode::Uds(uds_path) => {
+            eprintln!(
+                "[gateway] waiting for Dashboard on {} (timeout {:?})",
+                uds_path.display(),
+                args.connect_timeout
+            );
+            Some(AnyLiveSink::Uds(
+                UdsLiveSink::bind_and_accept(
+                    uds_path.clone(),
+                    args.connect_timeout,
+                    LiveMessage::hello(VIRTUAL_CAR_IDENTITY),
+                )
+                .await
+                .context("UDS accept / hello")?,
+            ))
+        }
+        GatewayLiveMode::Zenoh { keyexpr } => {
+            eprintln!(
+                "[gateway] waiting for Zenoh subscriber on {keyexpr} (timeout {:?})",
+                args.connect_timeout
+            );
+            Some(AnyLiveSink::Zenoh(
+                ZenohLiveSink::open_and_wait_subscriber(
+                    keyexpr.clone(),
+                    args.connect_timeout,
+                    LiveMessage::hello(VIRTUAL_CAR_IDENTITY),
+                )
+                .await
+                .context("Zenoh subscriber wait / hello")?,
+            ))
+        }
+        GatewayLiveMode::NoLive => None,
     };
 
     let (controller, _opts) = builder.install_controller().await?;

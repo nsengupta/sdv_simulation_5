@@ -475,16 +475,17 @@ The reference application is **one process, one `main()`**, with two cooperating
 
 Full design: [`DESIGN.md` §16](DESIGN.md#16-twin-lifecycle-install--start--operate--stop--disband). Architecture overview: [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased roadmap: [`docs/PHASES.md`](docs/PHASES.md). Checklist: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md).
 
-> **Note:** [Phase 6](docs/PHASES.md#phase-6--split-gateway-and-dashboard-processes) is **Done**:
-> Gateway owns the twin and observation capture; `tui_dashboard` is an observation-only UDS
-> consumer (`./tmp/observation.sock` by default). Zenoh is Phase 9.
+> **Note:** [Phase 9](docs/PHASES.md#phase-9--live-observation-transport-uds--zenoh) is **Done**:
+> Gateway owns the twin and observation capture; `tui_dashboard` is observation-only over an
+> **explicit** live carrier — `--uds <path>` or `--zenoh --keyexpr <expr>` (no defaults).
 
 ### Setup (live split)
 
-1. **Gateway** optionally binds `--uds` under `<cwd>/tmp/`, waits for one Dashboard client, then
-   installs the twin, tees records to `./observations/<run-id>/` and the live socket.
-2. **Dashboard** connects with `--uds`, shows connected status in the footer, applies schema-v2
-   events into the Phase 5 panes.
+1. **Gateway** requires exactly one of `--uds <path>`, `--zenoh --keyexpr <expr>`, or `--no-live`.
+   With a live mode it waits (UDS accept or Zenoh first subscriber), installs the twin, and tees
+   records to `./observations/<run-id>/` plus the live sink.
+2. **Dashboard** requires `--uds` or `--zenoh --keyexpr`; footer shows the path or `zenoh:<keyexpr>`;
+   applies schema-v2 events into the Phase 5 panes.
 3. **Emulator** drives lifecycle and sensors on CAN.
 
 The dashboard **trusts the twin completely** for display. Vehicle operation and **lifecycle**
@@ -515,18 +516,28 @@ See [Twin while `Off`](#twin-while-off--silent-ignore). Do not interpret pre-Pow
 
 | Binary | Start | Use |
 |--------|-------|-----|
-| **`gateway --uds …`** | Waits for Dashboard, then install; auto `PowerOn` on spawn (default) | Live twin + archive + UDS |
-| **`gateway`** (no `--uds`) | Install immediately; file archive only | Headless / CI |
+| **`gateway --uds …`** | Waits for Dashboard, then install | Live twin + archive + UDS |
+| **`gateway --zenoh --keyexpr …`** | Waits for first Zenoh subscriber, then install | Live twin + archive + Zenoh |
+| **`gateway --no-live`** | Install immediately; file archive only | Headless / CI |
 | **`tui_dashboard --uds …`** | Connects to Gateway UDS | Interactive observation |
+| **`tui_dashboard --zenoh --keyexpr …`** | Subscribes on the same keyexpr | Interactive observation |
 
 ```bash
+# UDS pair
 cargo run -p gateway -- --uds observation.sock
 cargo run -p tui_dashboard -- --uds observation.sock
+
+# Zenoh peer pair (same keyexpr; no zenohd required)
+cargo run -p gateway -- --zenoh --keyexpr sdv/twin/observation
+cargo run -p tui_dashboard -- --zenoh --keyexpr sdv/twin/observation
+
+# Headless archive only
+cargo run -p gateway -- --no-live --observation-dir observations
 ```
 
 ### Quit (`q`)
 
-**`q` exits the Dashboard only** and closes the UDS link. The Gateway twin keeps running.
+**`q` exits the Dashboard only** and closes the live link. The Gateway twin keeps running.
 Emulators and actuators in other terminals keep running on `vcan0`. Explicit Gateway Stop /
 disband (**TL-6**, Phase 10) is not implemented yet.
 
@@ -534,8 +545,9 @@ disband (**TL-6**, Phase 10) is not implemented yet.
 
 ## How to Run
 
-The live Phase 6 run uses separate Gateway and Dashboard processes sharing Linux **SocketCAN**
-(`vcan0` by default) plus a UDS observation link under `./tmp/`. Start in this order:
+The live run uses separate Gateway and Dashboard processes sharing Linux **SocketCAN**
+(`vcan0` by default) plus an explicit observation link (UDS under `./tmp/` or peer Zenoh).
+UDS example (start in this order):
 
 ```bash
 # One-time setup (per boot)
@@ -565,7 +577,16 @@ cargo run -p emulator -- --readings 30
 
 # Automated headless smoke (requires vcan0):
 # ./scripts/smoke-phase6-two-process.sh
+# ./scripts/smoke-phase9-zenoh-peer.sh
 ```
+
+Zenoh peer pair (Terminals 3–4 alternative):
+
+```bash
+cargo run -p gateway -- --zenoh --keyexpr sdv/twin/observation --observation-dir observations
+cargo run -p tui_dashboard -- --zenoh --keyexpr sdv/twin/observation
+```
+
 
 `--readings N` is optional and counts logical telemetry cycles. With `--readings N`, the
 emulator writes PowerOn, `N` RPM/lux/rain triples, then the shared trailer (`EngineRpm(0)` then
