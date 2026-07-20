@@ -173,6 +173,23 @@ File tee and live UDS/Zenoh envelopes all carry `schema_version: 3`.
 | Visibility | Ledger `visibility.ambient_lux` + headlamp | Glyph band + lux number + headlamp **text** |
 | Weather | Ledger `weather.raining` + wiper | Glyphs only for values |
 
+**Vertical rhythm:** insert one blank pane line between logical segments (Notice / Speed /
+Visibility / Weather) so the Diagnostic pane is easier to scan. Blank lines are presentation
+only (`LineRole` spacer or equivalent empty `PaneLine`); they carry no Twin data. Standby
+(pre-PowerOn) copy may keep its current tight stacking unless it looks cramped in smoke.
+
+Example stack (content abbreviated):
+
+```text
+Notice: …
+<blank>
+Speed: […] N/160 km/h
+<blank>
+Visibility: ◼ (120 lux)  Headlamps: On
+<blank>
+Weather: ☁  Wipers: ≋
+```
+
 **Visibility ambient bands** (from `common` `LUX_ON_THRESHOLD` / `LUX_OFF_THRESHOLD`):
 
 | Band | Condition | Glyph |
@@ -225,7 +242,8 @@ Driver (avoid glyph+text overload). Lux **keeps** the numeric.
 - Published projection includes `weather` + `wiper`; rain events are not `TimerTick`
 - Observation schema v3 golden / round-trip / compatibility tests updated
 - Existing rain↔wiper diagnostic contracts remain green
-- Driver: lux band glyphs, rain glyphs, wiper glyphs; weather line no longer `—`
+- Driver: lux band glyphs, rain glyphs, wiper glyphs; weather line no longer `—`;
+  blank spacer lines between Notice / Speed / Visibility / Weather
 - Engineer: wiper full state; weather Raining/Dry text
 
 ## Out of scope
