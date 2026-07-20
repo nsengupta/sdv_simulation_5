@@ -1,7 +1,7 @@
 # Weather + wiper observation (Dashboard display) design
 
 **Date:** 2026-07-20  
-**Status:** Draft — awaiting user review  
+**Status:** Approved  
 
 **Branch note:** Implement on a feature branch from `main`; do not push unless asked.  
 **Related:** [Phase 5 Dashboard presentation](2026-07-18-phase-5-dashboard-presentation-design.md),
@@ -173,10 +173,12 @@ File tee and live UDS/Zenoh envelopes all carry `schema_version: 3`.
 | Visibility | Ledger `visibility.ambient_lux` + headlamp | Glyph band + lux number + headlamp **text** |
 | Weather | Ledger `weather.raining` + wiper | Glyphs only for values |
 
-**Vertical rhythm:** insert one blank pane line between logical segments (Notice / Speed /
-Visibility / Weather) so the Diagnostic pane is easier to scan. Blank lines are presentation
-only (`LineRole` spacer or equivalent empty `PaneLine`); they carry no Twin data. Standby
-(pre-PowerOn) copy may keep its current tight stacking unless it looks cramped in smoke.
+**Vertical rhythm:** insert one **blank** pane line between logical segments (Notice / Speed /
+Visibility / Weather) so the Diagnostic pane is easier to scan. Chosen over always-visible
+horizontal rules — soft grouping without competing with Session/pane borders. Blank lines are
+presentation only (`LineRole::Spacer` or equivalent empty `PaneLine`); they carry no Twin data.
+Standby (pre-PowerOn) copy may keep its current tight stacking unless it looks cramped in smoke.
+Engineer pane: no extra spacers in this change (Driver-only).
 
 Example stack (content abbreviated):
 
