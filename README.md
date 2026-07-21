@@ -6,6 +6,9 @@
 **grows on its predecessor** — reusing and refactoring what still fits, and changing structure
 where the next goal requires it.
 
+:bookmark: For a summary of all the phases we have done so far, read [here](https://nsengupta.github.io/blog/prototype-software-defined-vehicle-milestone-1/).   
+This phase builds upon the the preceding phases.
+
 | Iteration | Repository | Focus |
 | --------- | ---------- | ----- |
 | 1 | [`sdv_simulation_1`](https://github.com/nsengupta/sdv_simulation_1) | First working CAN control loop |
