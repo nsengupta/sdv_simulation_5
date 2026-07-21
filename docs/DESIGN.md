@@ -61,7 +61,7 @@ shutdown/disband).
 | `observation` | Schema DTOs, file writer/reader, UDS/Zenoh live sink/source, tee |
 | `gateway` | Twin owner, CAN, capture tee, optional live publish |
 | `tui_dashboard` | Observation TUI consumer |
-| `emulator` | CAN lifecycle + telemetry producer |
+| `emulator` | CAN lifecycle + telemetry producer (`--readings`, `--tick-ms`) |
 | `front_headlamp_actuator` / `wiper_actuator` | Hardware-facing actuators on CAN |
 
 ## Archive

@@ -113,7 +113,7 @@ simulation**. Next lifecycle work is shutdown/disband (Phase 10).
 | Twin location | **Gateway** process via `TwinRuntimeBuilder` | **Gateway** process only |
 | Dashboard ↔ Twin | Explicit `--uds` or `--zenoh --keyexpr` via `LiveSink`/`LiveSource` (schema v3) | Same; vehicle-bus Zenoh / uProtocol later |
 | Lifecycle | Mode 1 emulator → CAN **`0x100`**; Dashboard has no lifecycle controls | Emulator or future driver UI → CAN **`0x100`** |
-| Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C controlled stop; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
+| Emulator | Separate binary; `TelemetrySource` + session runner; optional `--readings N` or Ctrl+C; optional `--tick-ms` (default 100) to pace ticks for demos; live bounded-random telemetry | Mode 2 file source / generator and embedded-driver options are deferred TODOs |
 | Observation capture | Gateway `ObservationTee` → `RunWriter` (+ optional UDS); Dashboard observation-only | Unchanged file contract; Phase 8 replay from run dirs |
 | Dashboard presentation | Phase 5 driver / engineer / ledger-tail; footer shows UDS connected/disconnected | Honest gaps (`—`) until Twin fields are added; inline widgets later |
 | Replay | None | Phase 8 — TBD next simulation |
@@ -151,13 +151,16 @@ cargo run -p tui_dashboard -- --uds observation.sock
 EMULATOR_TUNNEL_PROB=0.01 \
 EMULATOR_RAIN_PROB=0.008 \
 cargo run -p emulator -- --readings 30
+# optional demo pace: --tick-ms 400 (default 100)
 ```
 
 UDS paths resolve under `<cwd>/tmp/` (default `./tmp/observation.sock`). Headless capture: `cargo run -p gateway -- --no-live` still writes `./observations/<run-id>/`.
 Automated smoke: [`scripts/smoke-two-process.sh`](../scripts/smoke-two-process.sh).
 
 With `--readings N`, the emulator sends PowerOn, then `N` RPM/lux/rain cycles, then RPM zero and
-PowerOff (`3N + 3` frames). Without `--readings`, it runs until Ctrl+C on the emulator process,
+PowerOff (`3N + 3` frames). Inter-tick wait defaults to **100 ms** (`--tick-ms`); raise it to slow
+demos without changing Gateway/Dashboard. Without `--readings`, it runs until Ctrl+C on the
+emulator process,
 then sends the same trailer. PowerOff transmission does not guarantee acceptance: if FSM guards
 reject it, the observer-only Dashboard displays the twin's actual unchanged state and rejection
 evidence. The existing twin startup barrier, verified by contract test, orders immediate

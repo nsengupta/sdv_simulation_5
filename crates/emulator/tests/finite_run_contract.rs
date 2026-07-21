@@ -52,6 +52,7 @@ fn readings_limit_writes_exact_order_and_count() {
         &mut source,
         SessionConfig {
             max_readings: Some(NonZeroUsize::new(2).unwrap()),
+            tick: TICK,
         },
         |duration| sleeps.push(duration),
         || false,
@@ -93,6 +94,30 @@ fn readings_limit_writes_exact_order_and_count() {
 }
 
 #[test]
+fn custom_tick_ms_controls_sleep_budget() {
+    let mut sink = RecordingSink::default();
+    let mut source = LivePhysicsSource::new(emulator::car_physics::PhysicalCar::new());
+    let mut sleeps = Vec::new();
+    let tick = Duration::from_millis(250);
+
+    run_session(
+        &mut sink,
+        &mut source,
+        SessionConfig {
+            max_readings: Some(NonZeroUsize::new(2).unwrap()),
+            tick,
+        },
+        |duration| sleeps.push(duration),
+        || false,
+    )
+    .unwrap();
+
+    assert_eq!(sleeps.iter().copied().sum::<Duration>(), tick);
+    assert!(sleeps.iter().all(|d| *d == Duration::from_millis(10)));
+    assert_eq!(sleeps.len(), 25);
+}
+
+#[test]
 fn stop_flag_after_first_tick_writes_trailer_once() {
     let mut sink = RecordingSink::default();
     let mut source = FixedSource {
@@ -110,7 +135,10 @@ fn stop_flag_after_first_tick_writes_trailer_once() {
     run_session(
         &mut sink,
         &mut source,
-        SessionConfig { max_readings: None },
+        SessionConfig {
+            max_readings: None,
+            tick: TICK,
+        },
         |_| {
  // After the runner sleeps post-tick-1, request stop.
             stop.store(true, Ordering::SeqCst);
@@ -153,6 +181,7 @@ fn sink_error_stops_the_session() {
         &mut source,
         SessionConfig {
             max_readings: Some(NonZeroUsize::new(1).unwrap()),
+            tick: TICK,
         },
         |_| {},
         || false,

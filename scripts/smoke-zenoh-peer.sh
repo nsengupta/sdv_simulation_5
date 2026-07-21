@@ -8,7 +8,7 @@
 # Documented operator order:
 #   1) gateway --zenoh --keyexpr sdv/twin/observation
 #   2) tui_dashboard --zenoh --keyexpr sdv/twin/observation
-#   3) emulator --readings N
+#   3) emulator --readings N [--tick-ms MS]
 #
 # This script holds a peer subscriber (install gate) + runs the emulator so smoke
 # can verify archive output without a TTY.

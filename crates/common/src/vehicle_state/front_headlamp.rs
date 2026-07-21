@@ -1,7 +1,33 @@
 //! Front-headlamp zone (L1): alphabet + context + behavior.
 //!
-//! **alphabet:** [`HeadlampState`], [`HeadlampMessage`], [`HeadlampOutcome`].
+//! **Alphabet:** [`HeadlampState`], [`HeadlampMessage`], [`HeadlampOutcome`].
 //! L1 pattern: [`HeadlampContext::on_receiving_message`] → [`HeadlampZoneReply`]; L4 demux maps outcomes.
+//!
+//! **State transition (ASCII):**
+//! ```text
+//! Lifecycle (Brain StartAssemblies / StopAssemblies):
+//!
+//!                    BecomeOn
+//!          Off ──────────────────► Ready
+//!           ▲                        │
+//!           │                        │ BecomeOff (any → Off;
+//!           └────────────────────────┘  clears ack_pending; **no** RequestOff)
+//!
+//! Operational (lux + hardware ACK — assembly stays “up”):
+//!
+//!   Ready ──lux≤ON──► OnRequested ──AckOn──► On
+//!     ▲                   │                   │
+//!     │                   │ incomplete/       │ lux≥OFF
+//!     │                   │ timeout           ▼
+//!     │                   └──► Ready    OffRequested ──AckOff──► Ready
+//!     │                                           │
+//!     │                                           │ incomplete/timeout
+//!     └───────────────────────────────────────────┘ (back to On)
+//!
+//! BecomeOff from On / OnRequested / OffRequested / Ready also → Off in one hop
+//! with **no** RequestOff — same deliberate incompleteness as Wiper BecomeOff
+//! (no StopWiping). Lux-driven off uses OffRequested + AckOff instead.
+//! ```
 
 use std::time::{Duration, Instant};
 
@@ -21,7 +47,7 @@ use crate::vehicle_physics::{
 /// - `On` — physical lamp confirmed on.
 /// - `OffRequested` — OFF command in flight; waiting for `AckOff`.
 ///
-/// `BecomeOn` drives `Off → Ready`; `BecomeOff` drives `Ready | On → Off`.
+/// `BecomeOn` drives `Off → Ready`; `BecomeOff` drives **any → Off** in one hop (no `RequestOff`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadlampState {
     Off,
@@ -35,7 +61,7 @@ pub enum HeadlampState {
 ///
 /// Lifecycle messages :
 /// - `BecomeOn` — Brain tells the assembly to start; drives `Off → Ready`.
-/// - `BecomeOff` — Brain tells the assembly to stop; drives `Ready | On → Off`.
+/// - `BecomeOff` — Brain tells the assembly to stop; **any → Off** (no `RequestOff` on this path).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadlampMessage {
     BecomeOn,

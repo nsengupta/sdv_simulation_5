@@ -1,21 +1,39 @@
 use anyhow::{Context, Result, bail};
 use std::num::NonZeroUsize;
+use std::time::Duration;
+
+/// Default publish period between telemetry ticks (no demo pacing).
+pub const DEFAULT_TICK_MS: u64 = 100;
 
 const USAGE: &str = "\
-usage: emulator [--readings <positive integer>]
+usage: emulator [--readings <N>] [--tick-ms <ms>]
        [-h|--help]
 
 Drive lifecycle and live telemetry onto vcan0 (PowerOn first, then ticks).
 Omit --readings to run until Ctrl+C.
+--tick-ms sets the wait between ticks (default 100). Larger values slow the
+whole scenario for demos (Gateway/Dashboard stay real-time relative to CAN).
 
 examples:
   cargo run -p emulator -- --readings 30
+  cargo run -p emulator -- --readings 30 --tick-ms 400
   cargo run -p emulator
 ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmulatorArgs {
     pub readings: Option<NonZeroUsize>,
+    /// Period between telemetry ticks. Default [`DEFAULT_TICK_MS`].
+    pub tick: Duration,
+}
+
+impl Default for EmulatorArgs {
+    fn default() -> Self {
+        Self {
+            readings: None,
+            tick: Duration::from_millis(DEFAULT_TICK_MS),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,19 +55,40 @@ where
     if values.iter().any(|v| v == "-h" || v == "--help") {
         bail!("{USAGE}");
     }
-    if values.is_empty() {
-        return Ok(EmulatorArgs { readings: None });
+
+    let mut out = EmulatorArgs::default();
+    let mut i = 0usize;
+    while i < values.len() {
+        match values[i].as_str() {
+            "--readings" => {
+                i += 1;
+                let raw = values
+                    .get(i)
+                    .context("missing value for --readings")?;
+                let parsed = raw
+                    .parse::<usize>()
+                    .with_context(|| format!("invalid --readings value {raw:?}"))?;
+                out.readings =
+                    Some(NonZeroUsize::new(parsed).context("--readings must be greater than zero")?);
+            }
+            "--tick-ms" => {
+                i += 1;
+                let raw = values
+                    .get(i)
+                    .context("missing value for --tick-ms")?;
+                let ms = raw
+                    .parse::<u64>()
+                    .with_context(|| format!("invalid --tick-ms value {raw:?}"))?;
+                if ms == 0 {
+                    bail!("--tick-ms must be greater than zero");
+                }
+                out.tick = Duration::from_millis(ms);
+            }
+            other => bail!("unknown argument {other:?}\n{USAGE}"),
+        }
+        i += 1;
     }
-    if values.len() != 2 || values[0] != "--readings" {
-        bail!("{USAGE}");
-    }
-    let parsed = values[1]
-        .parse::<usize>()
-        .with_context(|| format!("invalid --readings value {:?}", values[1]))?;
-    let readings = NonZeroUsize::new(parsed).context("--readings must be greater than zero")?;
-    Ok(EmulatorArgs {
-        readings: Some(readings),
-    })
+    Ok(out)
 }
 
 pub fn parse_probability_override(raw: Option<&str>) -> Result<Option<f32>> {
@@ -93,9 +132,30 @@ mod tests {
         assert!(parse_args(["--readings", "0"]).is_err());
         assert!(parse_args(["--readings", "abc"]).is_err());
         assert!(parse_args(["--readings", overflowing_readings.as_str()]).is_err());
-        assert!(parse_args(["--readings", "30", "extra"]).is_err());
         assert!(parse_args(["--readings"]).is_err());
         assert!(parse_args(["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn tick_ms_defaults_to_100_and_accepts_positive() {
+        let def = parse_args(std::iter::empty::<&str>()).unwrap();
+        assert_eq!(def.tick, Duration::from_millis(DEFAULT_TICK_MS));
+
+        let paced = parse_args(["--tick-ms", "400"]).unwrap();
+        assert_eq!(paced.tick, Duration::from_millis(400));
+        assert_eq!(paced.readings, None);
+
+        let both = parse_args(["--readings", "30", "--tick-ms", "250"]).unwrap();
+        assert_eq!(both.readings, NonZeroUsize::new(30));
+        assert_eq!(both.tick, Duration::from_millis(250));
+
+        let reversed = parse_args(["--tick-ms", "250", "--readings", "10"]).unwrap();
+        assert_eq!(reversed.readings, NonZeroUsize::new(10));
+        assert_eq!(reversed.tick, Duration::from_millis(250));
+
+        assert!(parse_args(["--tick-ms", "0"]).is_err());
+        assert!(parse_args(["--tick-ms"]).is_err());
+        assert!(parse_args(["--tick-ms", "abc"]).is_err());
     }
 
     #[test]
@@ -103,6 +163,7 @@ mod tests {
         let err = parse_args(["--help"]).unwrap_err();
         let text = err.to_string();
         assert!(text.contains("--readings"));
+        assert!(text.contains("--tick-ms"));
         assert!(text.contains("cargo run -p emulator"));
         assert!(parse_args(["-h"]).is_err());
     }

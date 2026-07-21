@@ -1,17 +1,26 @@
 //! Wiper zone (L1): alphabet + context + behavior.
 //!
-//! This models the wiper as a simple three-state assembly with no actuation-ack
-//! protocol. All transitions are immediate.
+//! Three-state assembly, **no actuation-ACK protocol**. Transitions are immediate; the twinlet
+//! always tell-backs `ZoneReady` (when not silent). Motor CMDs are fire-and-forget.
 //!
-//! **State machine:**
+//! **State transition (ASCII):**
 //! ```text
-//! Off ──── BecomeOn ───► Ready ──── Start ──► Running
-//! ▲ │ │
-//! │ BecomeOff (any) │◄─── Stop ──────────┘
-//! └───────────────────────┘
+//!                    BecomeOn
+//!          Off ──────────────────► Ready ─────── Start ───────► Running
+//!           ▲                        │  ▲                          │
+//!           │                        │  └──────── Stop ────────────┘
+//!           │                        │              (RainsStopped)
+//!           │                        │
+//!           └──── BecomeOff ─────────┴────── BecomeOff ────────────┘
+//!                 (any → Off)              (any → Off)
+//!
+//! Operational: Start / Stop emit StartWiping / StopWiping (→ CAN CMD).
+//! Lifecycle:   BecomeOff jumps straight to Off from Ready or Running and does
+//!              **not** emit StopWiping — same deliberate incompleteness as Headlamp
+//!              BecomeOff (no RequestOff). Physical stop on shutdown is TBD for both.
 //! ```
 //!
-//! `BecomeOff` transitions directly to `Off` from any state.
+//! `BecomeOn`: `Off → Ready`. `BecomeOff`: any → `Off`. `Start`/`Stop` ignored while `Off`.
 
 // ── L1 alphabet ───────────────────────────────────────────────────────────────
 
@@ -31,7 +40,7 @@ pub enum WiperState {
 /// Inputs — brain tells these to the wiper assembly.
 ///
 /// - `BecomeOn` — lifecycle: start the assembly (`Off → Ready`).
-/// - `BecomeOff` — lifecycle: stop the assembly (any → `Off`).
+/// - `BecomeOff` — lifecycle: stop the assembly (any → `Off`; no `StopWiping`).
 /// - `Start` — rain detected (`Ready → Running`).
 /// - `Stop` — rain ceased (`Running → Ready`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

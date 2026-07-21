@@ -1,3 +1,7 @@
+//! Finite / Ctrl+C CAN session: PowerOn → telemetry ticks → abrupt RPM0 + PowerOff.
+//!
+//! Inter-tick wait comes from [`SessionConfig::tick`] (CLI `--tick-ms`, default 100 ms).
+
 use crate::sink::FrameSink;
 use crate::source::TelemetrySource;
 use crate::tick::TickFields;
@@ -6,12 +10,26 @@ use common::{LifecycleCommand, VssSignal};
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-pub const TICK: Duration = Duration::from_millis(100);
+use crate::cli::DEFAULT_TICK_MS;
+
+/// Default tick period when callers omit [`SessionConfig::tick`] (same as CLI default).
+pub const TICK: Duration = Duration::from_millis(DEFAULT_TICK_MS);
 const SLEEP_SLICE: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionConfig {
     pub max_readings: Option<NonZeroUsize>,
+    /// Sleep between telemetry ticks after each published reading (except after the last).
+    pub tick: Duration,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            max_readings: None,
+            tick: TICK,
+        }
+    }
 }
 
 /// End-of-session trailer: abrupt RPM→0 then PowerOff.
@@ -64,7 +82,7 @@ where
             break;
         }
 
-        interruptible_sleep(&mut sleep, TICK, &mut stop_requested);
+        interruptible_sleep(&mut sleep, config.tick, &mut stop_requested);
     }
 
     controlled_stop(sink)

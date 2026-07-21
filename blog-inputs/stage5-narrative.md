@@ -30,7 +30,7 @@ Five independently runnable binaries share the bus and observation path:
 |---------|------|
 | **Gateway** | Sole twin owner: install, CAN ingress, actuation, observation file tee, optional live publish |
 | **Dashboard** | Observation-only TUI (driver / engineer / ledger tail); no PowerOn keys, no mailbox injection |
-| **Emulator** | Finite or Ctrl+C CAN lifecycle + RPM / lux / rain |
+| **Emulator** | Finite or Ctrl+C CAN lifecycle + RPM / lux / rain (`--tick-ms` paces ticks; default 100 ms) |
 | **Headlamp / Wiper actuators** | CMD responses on `vcan0` |
 
 Observation is a first-class product of the Gateway:
@@ -78,6 +78,60 @@ So we aimed at **Gateway owns twin; Dashboard subscribes**, and we moved the cod
 gradually (observation library, file tee, then live UDS, then peer Zenoh, then presentation
 honesty for weather/wiper). The counterfactual above is why that target mattered — not a
 description of what Stage IV shipped as our long-term topology.
+
+---
+
+### Assembly L1: Headlamp and Wiper (same incompleteness on shutdown)
+
+Both assemblies are peers in the Brain (ROB, tell-back, PreparingToStart/Stop). They differ on
+**operational** actuation: Headlamp waits for hardware ACK on lux-driven on/off; Wiper is
+fire-and-forget on rain Start/Stop. They are **deliberately alike** on lifecycle stop:
+`BecomeOff` jumps straight to `Off` and does **not** emit a physical stop command
+(`RequestOff` / `StopWiping`). That keeps the two designs easy to compare; closing that gap
+later should be done for both together.
+
+**Headlamp**
+
+```text
+Lifecycle (Brain StartAssemblies / StopAssemblies):
+
+                   BecomeOn
+         Off ──────────────────► Ready
+          ▲                        │
+          │                        │ BecomeOff (any → Off;
+          └────────────────────────┘  no RequestOff)
+
+Operational (lux + hardware ACK — assembly stays “up”):
+
+  Ready ──lux≤ON──► OnRequested ──AckOn───────► On
+    ▲                   │                        │
+    │                   │ incomplete/            │ lux≥OFF
+    │                   │ timeout                ▼
+    │                   └──► Ready    OffRequested ──AckOff──► Ready
+    │                                            │
+    │                                            │  incomplete/timeout
+    └────────────────────────────────────────────┘ (back to On)
+```
+
+**Wiper**
+
+```text
+                   BecomeOn
+         Off ──────────────────► Ready ─────── Start ───────► Running
+          ▲                        │  ▲                          │
+          │                        │  └──────── Stop ────────────┘
+          │                        │  │            (RainsStopped)│ 
+          │                        │  └──────── Stop ────────────┘
+          │                        │                             │
+          └──── BecomeOff ─────────┴────── BecomeOff ────────────┘
+                (any → Off;                (any → Off;
+                 no StopWiping)             no StopWiping)
+
+Operational Start/Stop emit StartWiping/StopWiping (→ CAN CMD, no ACK).
+```
+
+Dashboard weather/wiper lines show the Brain’s published context (`raining`, `wiper.state`),
+not a confirmation from the wiper actuator.
 
 ---
 

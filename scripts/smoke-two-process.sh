@@ -8,7 +8,7 @@
 # Documented operator order:
 #   1) gateway --uds observation.sock
 #   2) tui_dashboard --uds observation.sock   # separate terminal
-#   3) emulator --readings N
+#   3) emulator --readings N [--tick-ms MS]
 #
 # This script automates a headless client (connect-gate) + emulator so CI/smoke
 # can verify archive output without a TTY. For a full TUI check, run dashboard

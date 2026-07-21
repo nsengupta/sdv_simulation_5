@@ -450,12 +450,7 @@ fn segment_style(token: SegmentStyle) -> Style {
 
 fn format_published_state(state: &PublishedFsmState) -> String {
     match state {
-        PublishedFsmState::ExtremeOperationWarning { entered_at } => {
-            format!(
-                "ExtremeOpWarn@{}ms",
-                entered_at.duration_since_epoch().as_millis()
-            )
-        }
+        PublishedFsmState::ExtremeOperationWarning { .. } => "ExtremeOpWarn".to_owned(),
         other => format!("{other:?}"),
     }
 }

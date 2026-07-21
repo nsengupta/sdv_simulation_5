@@ -53,13 +53,13 @@ blog drafts live under [`blog-inputs/`](blog-inputs/) and are accompanying text 
 2. **Observation capture and emission**
     * Dashboard uses versioned `manifest.json` + `diagnostic.jsonl` + `ledger.jsonl` emitted by 
       Gatway; transportation takes place through Unix Domain Socket or Zenoh (peer mode)
-    * Dashboard displays the captured and emitted records **live*
-    * Dashboard panes present Speed Bar, weather/wiper/visibility glyphs, Transition Ledgers,
-    * Diagnostics pane is meant for Drivers; Transition Ledger is meant for Enngineers watching 
+    * Dashboard displays the records captured, _live_ 
+    * Dashboard panes present Speed Bar, weather/wiper/visibility glyphs, Transition Ledgers
+    * Diagnostics pane is meant for Drivers; Transition Ledger is meant for Engineers, watching 
       behaviour of the Digital Twin
 3. **Controlled CAN data generation by emulator**
-    * Can emit N records (command-line parameter)
-    * Ensures that Digital Twin receives a `PowerOn` before any CAN message and a `PowerOff` as 
+    * Can emit N records (`--readings`); optional `--tick-ms` (default 100) slows ticks for demos
+    * Ensures that Digital Twin receives a `PowerOn` before any emulated CAN message and a `PowerOff` as 
       the last emulated CAN message
 
 Roadmap and deferred gaps: [`docs/PLAN.md`](docs/PLAN.md).  
@@ -78,6 +78,9 @@ cargo run -p gateway -- --uds observation.sock
 cargo run -p tui_dashboard -- --uds observation.sock
 EMULATOR_TUNNEL_PROB=0.01 EMULATOR_RAIN_PROB=0.008 \
   cargo run -p emulator -- --readings 30
+
+# Optional: slow ticks for demos (default --tick-ms 100):
+#   cargo run -p emulator -- --readings 30 --tick-ms 400
 ```
 
 UDS paths resolve under `<cwd>/tmp/` (e.g. `./tmp/observation.sock`).
@@ -158,11 +161,77 @@ sequenceDiagram
 
 ---
 
-## Dashboard live
+## Assembly actors (L1 state transitions)
 
-Live TUI during a finite emulator session (Driver / Engineer / ledger tail):
+Both assemblies are peers in the Brain (ROB, tell-back, PreparingToStart/Stop). Headlamp uses
+hardware ACK on lux-driven on/off; Wiper is fire-and-forget on rain Start/Stop. Lifecycle
+`BecomeOff` is **deliberately incomplete** on both: jump to `Off` with no physical stop CMD
+(`RequestOff` / `StopWiping`). Source of truth: `crates/common/src/vehicle_state/{front_headlamp,wiper}.rs`.
+
+### Headlamp
+
+```text
+Lifecycle (Brain Actor issues StartAssemblies / StopAssemblies):
+
+                   BecomeOn
+         Off ──────────────────► Ready
+          ▲                        │
+          │                        │ BecomeOff (any → Off;
+          └────────────────────────┘  no RequestOff)
+
+Operational (lux + hardware ACK — assembly stays “up”):
+
+  Ready ──lux≤ON──► OnRequested ──AckOn──► On
+    ▲                   │                   │
+    │                   │ incomplete/       │ lux≥OFF
+    │                   │ timeout           ▼
+    │                   |         OffRequested ──AckOff──► Ready
+    │───────────────────┘                       │
+    │                                           │ incomplete/timeout
+    └───────────────────────────────────────────┘ (back to On)
+```
+
+### Wiper
+
+```text
+                   BecomeOn
+         Off ──────────────────► Ready ─────── Start ───────► Running
+          ▲                        │  ▲                          │
+          │                        │  └──────── Stop ────────────┘
+          │                        │              (RainsStopped) │
+          │                        │                             │
+          └──── BecomeOff ─────────┴────── BecomeOff ────────────┘
+                (any → Off;                (any → Off;
+                 no StopWiping)             no StopWiping)
+
+Operational Start/Stop emit StartWiping/StopWiping (→ CAN CMD, no ACK).
+```
+
+---
+
+## Dashboard reflects the Twin
+
+The Dashboard is observation-only: every pane is driven by what the Twin publishes
+(diagnostics + ledger), not by a parallel UI model. The same surfaces show the Twin
+**just after start** and **after PowerOff** — only the published state changes.
+
+### At start (Twin Idle after PowerOn)
+
+Session / Driver / Engineer / ledger all agree: FSM `Idle`, assemblies `Ready`, boot notice,
+ledger through PreparingToStart → Idle.
+
+![Dashboard at start — Twin Idle after PowerOn](diagrams/dashboard-at-start.png)
+
+### Live (mid-session)
 
 ![Dashboard live during a finite emulator session](assets/dashboard-live.gif)
+
+### At end (Twin Off after PowerOff)
+
+Same layout; Twin has shut down: FSM `Off`, Headlamp/Wiper `Off`, ledger ends PreparingToStop →
+SwitchedOff. Weather/wiper glyphs still come from the last published context.
+
+![Dashboard at end — Twin Off after PowerOff](diagrams/dashboard-at-end.png)
 
 ---
 
@@ -187,6 +256,42 @@ Contract tests under `crates/common/src/test/`; observation goldens under
 
 ---
 
+## Project structure
+
+```text
+sdv_simulation_5/
+├── Cargo.toml                 # Workspace root
+├── README.md
+├── assets/
+│   └── dashboard-live.gif     # README live TUI capture
+├── blog-inputs/               # Stage narratives (accompanying prose)
+├── diagrams/                  # Mermaid + Dashboard start/end screenshots
+├── scripts/
+│   ├── smoke-two-process.sh   # Gateway + UDS + emulator
+│   ├── smoke-zenoh-peer.sh
+│   └── check-gateway-facade-imports.sh
+├── docs/
+│   ├── PLAN.md                # Roadmap + TBDs
+│   ├── DESIGN.md              # Stage 5 decisions
+│   ├── ARCHITECTURE-OVERVIEW.md
+│   ├── TODO-*.md
+│   └── archive/               # Iter 4 DESIGN, detailed PHASES, old specs/plans
+├── observations/              # Runtime capture output (gitignored runs)
+└── crates/
+    ├── common/                # Twin, FSM, ROB, assemblies, published records, facade
+    ├── observation/           # Schema DTOs, RunWriter/Reader, tee, UDS/Zenoh live
+    ├── gateway/               # Twin host, CAN, tee, live publish
+    ├── tui_dashboard/         # Observation-only TUI
+    ├── emulator/              # CAN lifecycle + RPM / lux / rain
+    ├── vehicle_device_bus/    # Headlamp / wiper CAN codecs
+    ├── front_headlamp_actuator/
+    └── wiper_actuator/        # Fire-and-forget motor stand-in
+```
+
+Deeper `common` pyramid (L0–L5): [`docs/design-notes-pyramid-layers.md`](docs/design-notes-pyramid-layers.md), [`docs/project-structure.md`](docs/project-structure.md).
+
+---
+
 ## Docs map
 
 | Doc | Role |
@@ -202,21 +307,13 @@ Contract tests under `crates/common/src/test/`; observation goldens under
 
 ---
 
-## Status
-
-Multi-process Gateway + Dashboard, observation file capture, live UDS or peer Zenoh, and
-Dashboard presentation (including weather/wiper) are in place. Standalone replay and graceful
-shutdown / disband are not started. Embedding the emulator inside the Dashboard was dropped.
-
----
-
 ## TBD
 
-Major future work (detail in [`docs/PLAN.md`](docs/PLAN.md) and linked TODOs):
+Major future work (detail in [`docs/PLAN.md`](@/docs/PLAN.md)):
 
 | Item | Compact plan |
 |------|----------------|
-| **Standalone replay** | Dashboard (or tool) plays `observations/<run-id>/` without a live Gateway. |
+| **Standalone replay** | Dashboard (or a new tool) plays `observations/<run-id>/` without a live Gateway. |
 | **Shutdown / disband** | Quit → Stop → wait `Off` → tear down actors / ingress ([`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md)). |
 | **Active ROB turns** | Engineer live `N` from `barrier_queue`; emit on queue push/drain (not ledger-hop stamps). |
 | **Visibility `Swatch`** | Colour chips for lux bands (low / hold / bright) instead of unicode boxes alone. |
@@ -225,3 +322,4 @@ Major future work (detail in [`docs/PLAN.md`](docs/PLAN.md) and linked TODOs):
 | **Richer assemblies** | Deeper Headlamp / Wiper twinlet detail once Twin publishes it. |
 | **Headlamp unconfirmed** | Finish / relocate `HeadlampActuationUnconfirmed` (zone tell-back candidate). |
 | **Non-blocking actuation** | Engineering backlog — async CMD path without stalling the twin loop ([`docs/TODO-simulation-5.md`](docs/TODO-simulation-5.md)). |
+| **Zenoh as the router** | Currently, Zenoh is used in _peer_ more; it should be used as a Router |
