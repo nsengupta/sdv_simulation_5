@@ -101,7 +101,7 @@ async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unr
         handle,
     };
 
-    // Phase 5: headlamp is silent so the startup barrier never completes automatically.
+    // headlamp is silent so the startup barrier never completes automatically.
     // Manually inject the ZoneReady reply (turn 2) to allow the FSM to reach Idle.
     controller.send_power_on().await.expect("power on");
     tokio::task::yield_now().await; // give the actor time to create the startup barrier
@@ -126,8 +126,8 @@ async fn given_silent_headlamp_when_headlamp_demux_event_then_ledger_records_unr
         std::time::Duration::from_millis(500),
     )
     .await;
-    // Phase 7: drain THREE startup ledger rows:
-    //   PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
+    // drain THREE startup ledger rows:
+    // PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
     // Wiper is non-silent (default) so it auto-replies to its BecomeOn barrier (turn 3).
     let _ = rx.recv().await.expect("power on row");
     let _ = rx.recv().await.expect("headlamp assembly zone ready row");

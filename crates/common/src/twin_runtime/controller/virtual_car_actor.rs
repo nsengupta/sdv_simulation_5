@@ -3,23 +3,23 @@
 //! ## Message layering
 //! - **[`FsmEvent`](crate::fsm::FsmEvent)** — pure FSM vocabulary: `Clone`, no I/O ports.
 //! - **[`TwinMessage`](crate::digital_twin::TwinMessage)** — full mailbox:
-//!   wraps [`FsmEvent`](crate::fsm::FsmEvent) via [`TwinMessage::Fsm`] plus
-//!   request/reply such as [`TwinMessage::GetStatus`] ([`RpcReplyPort`]).
+//! wraps [`FsmEvent`](crate::fsm::FsmEvent) via [`TwinMessage::Fsm`] plus
+//! request/reply such as [`TwinMessage::GetStatus`] ([`RpcReplyPort`]).
 //!
-//! ## Phase 4 — reorder buffer
+//! ## reorder buffer
 //!
 //! Every `Fsm` message immediately creates a [`TurnBarrier`] at the **back** of
-//! `barrier_queue`.  The drain loop (`try_drain_barrier_queue`) commits completed barriers
+//! `barrier_queue`. The drain loop (`try_drain_barrier_queue`) commits completed barriers
 //! strictly from the **front**, preserving event-arrival order regardless of the order in
 //! which zone replies arrive.
 //!
-//! ## Phase 8 — FSM-embedded assembly topology
+//! ## FSM-embedded assembly topology
 //!
-//! `MANAGED_ASSEMBLIES` is deleted.  The `StartAssemblies`/`StopAssemblies` `DomainAction`
+//! `MANAGED_ASSEMBLIES` is deleted. The `StartAssemblies`/`StopAssemblies` `DomainAction`
 //! variants now carry a `&'static [AssemblyId]` payload derived from `ALL_ASSEMBLIES`
-//! inside `machineries.rs`.  The actor reads the list directly from the action payload,
-//! eliminating the out-of-band constant.  Zone-dispatch helpers remain unchanged.
-//! `handle()` still has exactly **four arms**: `Fsm`, `ZoneReady`, `ZoneTellBackTimeout`, `GetStatus`.
+//! inside `machineries.rs`. The actor reads the list directly from the action payload,
+//! eliminating the out-of-band constant. Zone-dispatch helpers remain unchanged.
+//! `handle` still has exactly **four arms**: `Fsm`, `ZoneReady`, `ZoneTellBackTimeout`, `GetStatus`.
 
 use async_trait::async_trait;
 use ractor::concurrency::Duration as RactorDuration;
@@ -33,7 +33,6 @@ use crate::fsm::{
     self, AssemblyId, DomainAction, FrontHeadlampIncompleteCause, FrontHeadlampSwitchDirection,
     FsmEvent, FsmState,
 };
-use crate::vehicle_state::WiperState;
 use crate::observation_records::diagnostic::sink::{
     DiagnosticSink, TokioMpscDiagnosticSink, diag_actuation_failure, diag_boot,
     diag_headlamp_actuation_unconfirmed, diag_rain_changed, diag_timer_tick,
@@ -64,6 +63,7 @@ use crate::twin_runtime::zone_tell_back::{
     TellBackWait, synthetic_unresponsive_headlamp_reply, synthetic_unresponsive_wiper_reply,
 };
 use crate::twin_runtime::zone_turn::zone_message_for_event;
+use crate::vehicle_state::WiperState;
 use crate::vehicle_state::{HeadlampMessage, VehicleContext, WiperMessage};
 
 /// The Digital Twin Actor
@@ -96,7 +96,7 @@ pub struct VirtualCarRuntimeState {
     headlamp_actor: ActorRef<HeadlampActorMsg>,
     wiper_actor: ActorRef<WiperActorMsg>,
     /// Stable self-reference used to arm timers and send `ZoneTellBackTimeout` messages.
-    /// Captured in `pre_start` via `myself.clone()`; idiomatic actor self-ref pattern.
+    /// Captured in `pre_start` via `myself.clone`; idiomatic actor self-ref pattern.
     self_ref: ActorRef<TwinMessage>,
     next_turn_id: u64,
     /// Reorder-buffer: every in-flight FSM turn occupies one slot.
@@ -205,7 +205,7 @@ impl Actor for VirtualCarActor {
         })
     }
 
-    /// Main message dispatch — exactly **four** arms (unchanged from Phase 6).
+    /// Main message dispatch — exactly **four** arms (unchanged from the four-arm layout).
     ///
     /// Adding the Wiper assembly required zero new arms: zone routing is handled inside
     /// `begin_fsm_turn` and the `StartAssemblies`/`StopAssemblies` loop.
@@ -361,13 +361,13 @@ impl VirtualCarActor {
     /// Two mutually exclusive paths:
     ///
     /// 1. **Zone-directed** — `zone_message_for_event` returns `Some((zone_id, message))`.
-    ///    A [`TurnBarrier`] with the relevant zone pending is created; the zone gets a tell
-    ///    and a timer.
+    /// A [`TurnBarrier`] with the relevant zone pending is created; the zone gets a tell
+    /// and a timer.
     ///
-    /// 2. **Passthrough** — `zone_message_for_event` returns `None`.  The
-    ///    [`PassthroughBarrier`] is instantly drainable and keeps the queue ordered.
-    ///    This covers events with no zone mapping (e.g. `PowerOn`, `TimerTick`) AND
-    ///    user events arriving during `PreparingToStart` or `PreparingToStop`.
+    /// 2. **Passthrough** — `zone_message_for_event` returns `None`. The
+    /// [`PassthroughBarrier`] is instantly drainable and keeps the queue ordered.
+    /// This covers events with no zone mapping (e.g. `PowerOn`, `TimerTick`) AND
+    /// user events arriving during `PreparingToStart` or `PreparingToStop`.
     async fn begin_fsm_turn(
         brain: &ActorRef<TwinMessage>,
         runtime_state: &mut VirtualCarRuntimeState,
@@ -511,7 +511,7 @@ impl VirtualCarActor {
     /// Handle a spontaneous zone event (ACK timer, future assembly deadlines).
     ///
     /// These are not correlated to a brain `turn_id`, so they do not interact with
-    /// `barrier_queue`.  The event is committed directly; the drain loop runs afterwards.
+    /// `barrier_queue`. The event is committed directly; the drain loop runs afterwards.
     async fn on_zone_spontaneous(
         runtime_state: &mut VirtualCarRuntimeState,
         _assembly_id: AssemblyId, // headlamp-only; wiper has no spontaneous events
@@ -611,16 +611,12 @@ impl VirtualCarActor {
             for hop in &quiescent.hops {
                 match &hop.event {
                     FsmEvent::RainsStarted => {
-                        let _ = sink.try_emit(diag_rain_changed(
-                            &runtime_state.session_clock,
-                            true,
-                        ));
+                        let _ =
+                            sink.try_emit(diag_rain_changed(&runtime_state.session_clock, true));
                     }
                     FsmEvent::RainsStopped => {
-                        let _ = sink.try_emit(diag_rain_changed(
-                            &runtime_state.session_clock,
-                            false,
-                        ));
+                        let _ =
+                            sink.try_emit(diag_rain_changed(&runtime_state.session_clock, false));
                     }
                     _ => {}
                 }
@@ -652,10 +648,7 @@ impl VirtualCarActor {
                         continue;
                     }
                     if let Some(sink) = &runtime_state.diagnostic_sink {
-                        let _ = sink.try_emit(diag_warning(
-                            &runtime_state.session_clock,
-                            message,
-                        ));
+                        let _ = sink.try_emit(diag_warning(&runtime_state.session_clock, message));
                     }
                 }
                 DomainAction::StartAssemblies(assemblies) => {
@@ -744,16 +737,14 @@ impl VirtualCarActor {
             match err {
                 TransitionSinkError::Full => {
                     if let Some(sink) = diag_sink {
-                        let _ = sink.try_emit(diag_transition_sink_full(
-                            &runtime_state.session_clock,
-                        ));
+                        let _ =
+                            sink.try_emit(diag_transition_sink_full(&runtime_state.session_clock));
                     }
                 }
                 TransitionSinkError::Closed => {
                     if let Some(sink) = diag_sink {
-                        let _ = sink.try_emit(diag_transition_sink_closed(
-                            &runtime_state.session_clock,
-                        ));
+                        let _ = sink
+                            .try_emit(diag_transition_sink_closed(&runtime_state.session_clock));
                     }
                 }
             }

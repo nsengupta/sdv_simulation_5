@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 6 two-process smoke: Gateway (twin + UDS tee) + live UDS client + emulator.
+# Two-process UDS smoke: Gateway (twin + UDS tee) + live UDS client + emulator.
 #
 # Prerequisites (from repo root):
 #   sudo ip link add dev vcan0 type vcan 2>/dev/null || true
@@ -90,4 +90,4 @@ if ! kill -0 "$GW_PID" 2>/dev/null; then
   exit 1
 fi
 
-echo "Phase 6 smoke OK: $RUNS observation run(s); Gateway still running after client disconnect."
+echo "Two-process smoke OK: $RUNS observation run(s); Gateway still running after client disconnect."

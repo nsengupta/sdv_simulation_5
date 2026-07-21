@@ -2,6 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use observation::schema::CURRENT_SCHEMA_VERSION;
 use observation::schema::v1::{
     DiagnosticKindV1, DiagnosticLevelV1, DiagnosticPayloadV1, RunId, StreamEnvelopeV1,
     UnixTimestampV1,
@@ -10,7 +11,6 @@ use observation::{
     LiveMessage, LiveRecordDto, LiveStream, UdsLiveSink, UdsLiveSource, ensure_tmp_parent,
     resolve_uds_path,
 };
-use observation::schema::CURRENT_SCHEMA_VERSION;
 
 struct CwdGuard {
     original: PathBuf,

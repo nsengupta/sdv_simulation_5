@@ -5,10 +5,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use zenoh::pubsub::Publisher;
-use zenoh::sample::Sample;
 use zenoh::Session;
 use zenoh::Wait;
+use zenoh::pubsub::Publisher;
+use zenoh::sample::Sample;
 
 use crate::ObservationError;
 use crate::live::message::LiveMessage;
@@ -85,9 +85,7 @@ async fn wait_for_matching_subscriber(
     })
     .await
     .map_err(|_| ObservationError::Zenoh {
-        message: format!(
-            "timed out waiting for subscriber on {keyexpr} after {connect_timeout:?}"
-        ),
+        message: format!("timed out waiting for subscriber on {keyexpr} after {connect_timeout:?}"),
     })?
 }
 
@@ -165,12 +163,13 @@ impl ZenohLiveSource {
         }
         match self.subscriber.recv_async().await {
             Ok(sample) => {
-                let line = sample
-                    .payload()
-                    .try_to_string()
-                    .map_err(|err| ObservationError::Zenoh {
-                        message: format!("payload is not UTF-8: {err}"),
-                    })?;
+                let line =
+                    sample
+                        .payload()
+                        .try_to_string()
+                        .map_err(|err| ObservationError::Zenoh {
+                            message: format!("payload is not UTF-8: {err}"),
+                        })?;
                 Ok(Some(LiveMessage::from_json_line(line.trim_end())?))
             }
             Err(_) => {

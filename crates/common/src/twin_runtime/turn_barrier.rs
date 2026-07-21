@@ -1,23 +1,23 @@
-//! Reorder-buffer (ROB) barrier for one in-flight FSM turn (Phase 4).
+//! Reorder-buffer (ROB) barrier for one in-flight FSM turn.
 //!
 //! Every [`FsmEvent`] processed by the brain actor immediately gets a `TurnBarrier` pushed
-//! onto the back of `VirtualCarRuntimeState::barrier_queue`.  Barriers are committed
+//! onto the back of `VirtualCarRuntimeState::barrier_queue`. Barriers are committed
 //! strictly in **arrival order** from the front of the queue: the drain loop advances only
 //! while the front barrier's `pending` set is empty (`is_complete`).
 //!
 //! ## Lifecycle
 //!
 //! ```text
-//! begin_fsm_turn   ─── new() ───► [pending = {Headlamp}]
-//!                                        │
-//!         ZoneReady  ───────────► act_on_zone_reply()
-//!                                        │  aborts live timer
-//!         ZoneTellBackTimeout ──► act_on_zone_timeout()
-//!                                        │  removes spent timer
-//!                                        ├── Retry → store_retry_timer()
-//!                                        └── GaveUp → caller: act_on_zone_reply(synthetic)
-//!                                        │
-//!         is_complete() == true ─────────► drain loop → into_resolved_turn()
+//! begin_fsm_turn ─── new ───► [pending = {Headlamp}]
+//! │
+//! ZoneReady ───────────► act_on_zone_reply
+//! │ aborts live timer
+//! ZoneTellBackTimeout ──► act_on_zone_timeout
+//! │ removes spent timer
+//! ├── Retry → store_retry_timer
+//! └── GaveUp → caller: act_on_zone_reply(synthetic)
+//! │
+//! is_complete == true ─────────► drain loop → into_resolved_turn
 //! ```
 
 use std::collections::{BTreeSet, HashMap};
@@ -51,14 +51,14 @@ pub(crate) enum TimeoutOutcome {
 
 /// One FSM turn awaiting zone tell-back(s) before the drain loop may commit it.
 ///
-/// All fields are private.  Identity (`turn_id`) is assigned at construction via
-/// `VirtualCarRuntimeState::alloc_turn_id` and is immutable thereafter.  Read-only
+/// All fields are private. Identity (`turn_id`) is assigned at construction via
+/// `VirtualCarRuntimeState::alloc_turn_id` and is immutable thereafter. Read-only
 /// getters expose the three "header" fields to the actor; all mutation goes through
 /// the dedicated methods below.
 pub(crate) struct TurnBarrier {
     /// Monotonically increasing identity assigned by `VirtualCarRuntimeState::alloc_turn_id`;
     /// used by zone twinlets to correlate `ZoneReady` / `ZoneTellBackTimeout` messages back
-    /// to the correct brain turn.  Immutable after construction.
+    /// to the correct brain turn. Immutable after construction.
     turn_id: u64,
     /// The ingress event that opened this turn; forwarded unchanged to `ResolvedTurn`.
     /// Immutable after construction.
@@ -74,7 +74,7 @@ pub(crate) struct TurnBarrier {
     /// Correlation state per assembly: `tell_attempt` advances on each retry so that
     /// late-arriving replies from a superseded attempt are discarded as stale.
     zone_waits: HashMap<AssemblyId, TellBackWait>,
-    /// Live timer handles; `abort()` is called when a real reply arrives first,
+    /// Live timer handles; `abort` is called when a real reply arrives first,
     /// preventing a spurious `ZoneTellBackTimeout` from firing afterwards.
     zone_timers: HashMap<AssemblyId, TellBackTimer>,
     /// Assembly replies collected so far; handed to `into_resolved_turn` for commit.
@@ -153,7 +153,7 @@ impl TurnBarrier {
 
     // ── mutation ─────────────────────────────────────────────────────────────
 
-    /// Register one assembly as pending.  Called once per assembly in `begin_fsm_turn`.
+    /// Register one assembly as pending. Called once per assembly in `begin_fsm_turn`.
     /// Stores the message for retry, the correlation wait, and the live timer handle.
     pub fn add_pending_zone(
         &mut self,
@@ -168,7 +168,7 @@ impl TurnBarrier {
         self.zone_timers.insert(assembly_id, timer);
     }
 
-    /// Store a fresh timer handle after a retry.  Does NOT abort the old one (already spent).
+    /// Store a fresh timer handle after a retry. Does NOT abort the old one (already spent).
     pub fn store_retry_timer(&mut self, assembly_id: AssemblyId, timer: TellBackTimer) {
         self.zone_timers.insert(assembly_id, timer);
     }
@@ -197,7 +197,7 @@ impl TurnBarrier {
         assembly_id: AssemblyId,
         tell_attempt: u32,
     ) -> TimeoutOutcome {
-        // Timer has already fired — drop the stale handle, no abort() needed.
+        // Timer has already fired — drop the stale handle, no abort needed.
         let _ = self.zone_timers.remove(&assembly_id);
 
         let Some(wait) = self.zone_waits.get_mut(&assembly_id) else {
@@ -218,7 +218,7 @@ impl TurnBarrier {
         }
     }
 
-    /// Abort all live timers.  Called in `post_stop` during actor teardown.
+    /// Abort all live timers. Called in `post_stop` during actor teardown.
     pub fn abort_all_timers(&mut self) {
         for (_, timer) in self.zone_timers.drain() {
             timer.abort();
@@ -230,7 +230,7 @@ impl TurnBarrier {
     /// Consuming decomposition for the drain loop: packages `event`, `now`, and the
     /// collected zone replies into a [`ResolvedTurn`] ready for `commit_resolved_turn`.
     ///
-    /// Called only after `is_complete()` returns `true` so that all zone replies
+    /// Called only after `is_complete` returns `true` so that all zone replies
     /// are guaranteed to be present (either real or synthetic).
     ///
     /// `zone_replies: HashMap<AssemblyId, ZoneReply>` and `ZoneReplies::replies` share the
@@ -252,7 +252,7 @@ impl TurnBarrier {
 ///
 /// Distinct from [`TurnBarrier`] so that the type system prevents accidentally
 /// calling `add_pending_zone` on a passthrough turn — the method simply does not
-/// exist on this type.  Used for pure brain-state transitions (e.g. `PowerOn`,
+/// exist on this type. Used for pure brain-state transitions (e.g. `PowerOn`,
 /// `UpdateRpm`) where no zone message is emitted.
 pub(crate) struct PassthroughBarrier {
     turn_id: u64,
@@ -261,7 +261,7 @@ pub(crate) struct PassthroughBarrier {
 }
 
 impl PassthroughBarrier {
-    /// Create a passthrough barrier.  `is_complete()` is always `true`.
+    /// Create a passthrough barrier. `is_complete` is always `true`.
     pub fn new(turn_id: u64, event: FsmEvent, now: Instant) -> Self {
         Self {
             turn_id,

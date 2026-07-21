@@ -112,10 +112,7 @@ mod tests {
     fn speed_band_boundaries() {
         assert_eq!(speed_band(0), SpeedBand::Green);
         assert_eq!(speed_band(SPEED_BAND_GREEN_MAX_KPH), SpeedBand::Green);
-        assert_eq!(
-            speed_band(SPEED_BAND_GREEN_MAX_KPH + 1),
-            SpeedBand::Yellow
-        );
+        assert_eq!(speed_band(SPEED_BAND_GREEN_MAX_KPH + 1), SpeedBand::Yellow);
         assert_eq!(speed_band(SPEED_BAND_YELLOW_MAX_KPH), SpeedBand::Yellow);
         assert_eq!(speed_band(SPEED_BAND_YELLOW_MAX_KPH + 1), SpeedBand::Red);
         assert_eq!(

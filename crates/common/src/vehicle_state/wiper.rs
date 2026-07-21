@@ -1,14 +1,14 @@
 //! Wiper zone (L1): alphabet + context + behavior.
 //!
-//! Phase 7 models the wiper as a simple three-state assembly with no actuation-ack
-//! protocol.  All transitions are immediate.
+//! This models the wiper as a simple three-state assembly with no actuation-ack
+//! protocol. All transitions are immediate.
 //!
 //! **State machine:**
 //! ```text
 //! Off ──── BecomeOn ───► Ready ──── Start ──► Running
-//!  ▲                       │                    │
-//!  │   BecomeOff (any)     │◄─── Stop ──────────┘
-//!  └───────────────────────┘
+//! ▲ │ │
+//! │ BecomeOff (any) │◄─── Stop ──────────┘
+//! └───────────────────────┘
 //! ```
 //!
 //! `BecomeOff` transitions directly to `Off` from any state.
@@ -17,8 +17,8 @@
 
 /// Snapshot — what the wiper zone **IS**.
 ///
-/// - `Off`     — assembly not started; ignores `Start`/`Stop` events.
-/// - `Ready`   — assembly active; no rain detected.
+/// - `Off` — assembly not started; ignores `Start`/`Stop` events.
+/// - `Ready` — assembly active; no rain detected.
 /// - `Running` — actively wiping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WiperState {
@@ -30,10 +30,10 @@ pub enum WiperState {
 
 /// Inputs — brain tells these to the wiper assembly.
 ///
-/// - `BecomeOn`  — lifecycle: start the assembly (`Off → Ready`).
+/// - `BecomeOn` — lifecycle: start the assembly (`Off → Ready`).
 /// - `BecomeOff` — lifecycle: stop the assembly (any → `Off`).
-/// - `Start`     — rain detected (`Ready → Running`).
-/// - `Stop`      — rain ceased (`Running → Ready`).
+/// - `Start` — rain detected (`Ready → Running`).
+/// - `Stop` — rain ceased (`Running → Ready`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiperMessage {
     BecomeOn,
@@ -51,9 +51,9 @@ pub struct WiperZoneReply {
 
 /// Zone-local egress — L4 maps to actuation / diagnostics.
 ///
-/// - `StartWiping`   — wiper motor should be activated.
-/// - `StopWiping`    — wiper motor should be deactivated.
-/// - `LogWarning`    — observability signal; routed to diagnostic sink, never actuated.
+/// - `StartWiping` — wiper motor should be activated.
+/// - `StopWiping` — wiper motor should be deactivated.
+/// - `LogWarning` — observability signal; routed to diagnostic sink, never actuated.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WiperOutcome {
     StartWiping,

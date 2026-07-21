@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use observation::{resolve_uds_path, DEFAULT_UDS_FILE_NAME};
+use observation::{DEFAULT_UDS_FILE_NAME, resolve_uds_path};
 
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
 
@@ -107,9 +107,9 @@ where
                 bail!("--connect-timeout requires seconds");
             };
             let text = raw.to_string_lossy();
-            connect_timeout_secs = text.parse::<u64>().with_context(|| {
-                format!("invalid --connect-timeout value: {text}")
-            })?;
+            connect_timeout_secs = text
+                .parse::<u64>()
+                .with_context(|| format!("invalid --connect-timeout value: {text}"))?;
         } else if arg == OsStr::new("--print-transitions-only") {
             print_transitions_only = true;
         } else if arg == OsStr::new("--trace-actuation-ingress") {
@@ -136,9 +136,7 @@ where
             if keyexpr.is_some() {
                 bail!("{USAGE}");
             }
-            GatewayLiveMode::Uds(
-                resolve_uds_path(Some(&path)).map_err(|err| anyhow::anyhow!(err))?,
-            )
+            GatewayLiveMode::Uds(resolve_uds_path(Some(&path)).map_err(|err| anyhow::anyhow!(err))?)
         }
         (None, true, false) => {
             let Some(keyexpr) = keyexpr.filter(|k| !k.is_empty()) else {

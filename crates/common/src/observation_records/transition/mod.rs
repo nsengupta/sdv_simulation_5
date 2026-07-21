@@ -8,10 +8,10 @@
 //!
 //! Design contract (see `docs/design-notes-runtime-observation.md`, item "(1)"):
 //! - **Permanence of `Instant` inside:** [`crate::fsm::FsmState`],
-//!   [`crate::vehicle_state::VehicleContext`], and [`crate::fsm::RawTransitionRecord`] stay `Instant`-bearing
-//!   and serde-free. Nothing here mutates the functional core.
+//! [`crate::vehicle_state::VehicleContext`], and [`crate::fsm::RawTransitionRecord`] stay `Instant`-bearing
+//! and serde-free. Nothing here mutates the functional core.
 //! - **UnixTimestamp for the world:** this module owns the full, lossless mirror of those types with
-//!   each `Instant` replaced by a semantic wall-clock stamp since `UNIX_EPOCH`.
+//! each `Instant` replaced by a semantic wall-clock stamp since `UNIX_EPOCH`.
 //!
 //! Ordering for offline folding is `record_seq` (clock-independent); `recorded_at`
 //! answers *how long between transitions*; `session_started_at` says *which run*.
@@ -350,9 +350,7 @@ pub struct PublishedWeatherContext {
 
 impl From<&crate::vehicle_state::WeatherContext> for PublishedWeatherContext {
     fn from(w: &crate::vehicle_state::WeatherContext) -> Self {
-        Self {
-            raining: w.raining,
-        }
+        Self { raining: w.raining }
     }
 }
 

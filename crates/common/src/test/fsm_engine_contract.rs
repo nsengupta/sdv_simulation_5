@@ -1,8 +1,6 @@
 //! Unit tests for the FSM spec (`transition` / `output`).
 
-use crate::fsm::{
-    AssemblyId, FsmAction, FsmEvent, FsmState, TransitionNote, output, transition,
-};
+use crate::fsm::{AssemblyId, FsmAction, FsmEvent, FsmState, TransitionNote, output, transition};
 use crate::vehicle_physics::{
     EXTREME_OPERATION_WARNING_MESSAGE, RPM_EXTREME_OPERATION_THRESHOLD,
     SPEED_EXTREME_OPERATION_THRESHOLD_KPH, SPEED_THRESHOLD_WARNING_MESSAGE,
@@ -21,7 +19,7 @@ fn ctx_with_rpm(rpm: u16) -> VehicleContext {
     ctx
 }
 
-/// Healthy `VehicleContext` matching a valid digital twin (same values as `VehicleContext::default()`).
+/// Healthy `VehicleContext` matching a valid digital twin (same values as `VehicleContext::default`).
 fn valid_twin_context() -> VehicleContext {
     VehicleContext::default()
 }
@@ -264,9 +262,11 @@ fn test_warning_power_off_when_stationary_starts_shutdown() {
     assert!(next.note.is_none());
     let actions = output(&warning, &next.next_state, &ctx);
     assert!(actions.contains(&FsmAction::StopBuzzer));
-    assert!(actions
-        .iter()
-        .any(|a| matches!(a, FsmAction::StopAssemblies(_))));
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, FsmAction::StopAssemblies(_)))
+    );
 }
 
 #[test]

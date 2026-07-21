@@ -62,10 +62,7 @@ fn unix_timestamp_v1_orders_across_a_second_boundary() {
 #[test]
 fn unix_timestamp_v1_display_uses_readable_utc_layout() {
     let stamp = UnixTimestampV1::new(SESSION_SECONDS, 653_061_112).unwrap();
-    assert_eq!(
-        stamp.to_string(),
-        "2026-07-17 | 04:00:00:653061112 (UTC)"
-    );
+    assert_eq!(stamp.to_string(), "2026-07-17 | 04:00:00:653061112 (UTC)");
 }
 
 #[test]

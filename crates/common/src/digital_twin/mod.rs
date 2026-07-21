@@ -38,7 +38,7 @@ impl std::error::Error for DigitalTwinCarError {}
 /// Fields are **private**: a `DigitalTwinCar` can only come to exist via [`Self::new`] (which
 /// guarantees a non-blank identity), and after birth its mutable state can only evolve through
 /// [`Self::apply_step`] — the recorded result of the pure `fsm::step`, which is the *sole*
-/// state mutator (see Q9 / ADR-3 in `docs/design-notes-runtime-observation.md`). External code
+/// state mutator (see `docs/design-notes-runtime-observation.md`). External code
 /// cannot set `current_state`/`context` to arbitrary values; this makes "twin with a blank
 /// identity" and "twin mutated outside the FSM step" unrepresentable rather than runtime-checked.
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ impl DigitalTwinCar {
     /// Construct a twin, validating the only structurally-invalid constituent: a blank
     /// identity (empty or whitespace-only). The identity is stored trimmed. `current_state`
     /// and `context` are caller-supplied (e.g. a freshly-born twin passes `FsmState::Off` +
-    /// `VehicleContext::default()`).
+    /// `VehicleContext::default`).
     pub fn new(
         identity: impl Into<String>,
         current_state: FsmState,
@@ -87,7 +87,7 @@ impl DigitalTwinCar {
 
     /// Evolve the twin by recording the result of a pure `fsm::step`. This is the **only**
     /// mutation path after construction, structurally enforcing that the FSM step is the sole
-    /// state mutator (Q9 / ADR-3).
+    /// state mutator.
     pub fn apply_step(&mut self, next_state: FsmState, context: VehicleContext) {
         self.current_state = next_state;
         self.context = context;
@@ -95,7 +95,7 @@ impl DigitalTwinCar {
 
     /// Checks identity and context invariants on a snapshot (e.g. after `GetStatus`).
     /// The "Master Guardian"
-    /// Returns Ok(()) if all safety laws are satisfied, or an Err describing the violation.
+    /// Returns Ok() if all safety laws are satisfied, or an Err describing the violation.
     ///
     /// Thin wrapper over the snapshot-only *runtime* concerns (health) plus the pure
     /// [`verify_state_laws`] catalog. The identity is no longer checked here: a non-blank
@@ -205,7 +205,7 @@ pub enum TwinMessage {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ZoneReply {
     Headlamp(crate::vehicle_state::HeadlampZoneReply),
-    /// Phase-7 wiper zone reply.
+    /// wiper zone reply.
     Wiper(crate::vehicle_state::WiperZoneReply),
 }
 

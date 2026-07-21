@@ -12,16 +12,16 @@ use std::time::{Duration, Instant};
 ///
 /// Human table:
 /// - Off + PowerOn(healthy ctx) -> PreparingToStart({all assemblies})
-/// - PreparingToStart({a, ...}) + AssemblyZoneReady(a) -> PreparingToStart({...}) or Idle (when set empties)
+/// - PreparingToStart({a,...}) + AssemblyZoneReady(a) -> PreparingToStart({...}) or Idle (when set empties)
 /// - PreparingToStart + anything else -> PreparingToStart (self-loop, set unchanged)
 /// - Idle + PowerOff -> PreparingToStop({all assemblies})
 /// - Idle + UpdateRpm(rpm > [`RPM_DRIVING_THRESHOLD`]) -> Driving
 /// - Driving + derived ctx.powertrain.speed_kph == 0 -> Idle (any event, after kinematic refresh in `step`)
 /// - Driving + speed > 160 km/h **or** (speed > 160 and RPM > 5500) -> ExtremeOperationWarning(now)
 /// - ExtremeOperationWarning + stationary (speed 0): PowerOff -> PreparingToStop; any other event -> Idle
-///   (abrupt standstill waives the cooldown — emulator trailer / hard stop)
+/// (abrupt standstill waives the cooldown — emulator trailer / hard stop)
 /// - ExtremeOperationWarning + TimerTick + cooldown + warning cleared (still rolling) -> Driving/Idle
-/// - PreparingToStop({a, ...}) + AssemblyZoneReady(a) -> PreparingToStop({...}) or Off (when set empties)
+/// - PreparingToStop({a,...}) + AssemblyZoneReady(a) -> PreparingToStop({...}) or Off (when set empties)
 /// - PreparingToStop + anything else -> PreparingToStop (self-loop, set unchanged)
 /// - Everything else -> stay in current state
 ///
@@ -224,10 +224,9 @@ pub fn output(old_state: &FsmState, new_state: &FsmState, ctx: &VehicleContext) 
     match (old_state, new_state) {
         (Off, PreparingToStart(_)) => vec![StartAssemblies(ALL_ASSEMBLIES.to_vec())],
         (Idle, PreparingToStop(_)) => vec![StopAssemblies(ALL_ASSEMBLIES.to_vec())],
-        (ExtremeOperationWarning(_), PreparingToStop(_)) => vec![
-            StopBuzzer,
-            StopAssemblies(ALL_ASSEMBLIES.to_vec()),
-        ],
+        (ExtremeOperationWarning(_), PreparingToStop(_)) => {
+            vec![StopBuzzer, StopAssemblies(ALL_ASSEMBLIES.to_vec())]
+        }
         // Intra-mode steps: an assembly acknowledged but peers are still pending.
         // The FSM is still in the same mode; no domain event to publish.
         (PreparingToStart(_), PreparingToStart(_)) => vec![],

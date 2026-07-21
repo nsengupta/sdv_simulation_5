@@ -1,4 +1,4 @@
-//! Item 1 — brain commit hook: `commit_resolved_turn` + quiescence on the actor path (ADR-7).
+//! Item 1 — brain commit hook: `commit_resolved_turn` + quiescence on the actor path.
 //!
 //! TDD: given-when-then names; pure tests first, then actor wiring.
 
@@ -92,7 +92,7 @@ fn given_driving_in_dark_when_commit_resolved_turn_without_zone_reply_then_singl
 
 #[tokio::test]
 async fn given_actor_idle_when_power_on_then_single_ledger_row_and_idle_state() {
-    // Phase 1: PowerOn → PreparingToStart (seq 1), then AssembliesReady → Idle (seq 2).
+    // PowerOn → PreparingToStart (seq 1), then AssembliesReady → Idle (seq 2).
     let (transition_tx, mut rx) = mpsc::channel(8);
     let runtime_options = VehicleControllerRuntimeOptions {
         transition_tx: Some(transition_tx),
@@ -117,9 +117,9 @@ async fn given_actor_idle_when_power_on_then_single_ledger_row_and_idle_state() 
     assert_eq!(record_start.event, PublishedFsmEvent::PowerOn);
     assert_eq!(record_start.next_state, PublishedFsmState::PreparingToStart);
 
-    // Phase 7: TWO startup barriers drain:
-    //   row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart (Wiper still pending)
-    //   row 3 = AssemblyZoneReady(Wiper) → Idle
+    // TWO startup barriers drain:
+    // row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart (Wiper still pending)
+    // row 3 = AssemblyZoneReady(Wiper) → Idle
     let record_headlamp = rx.recv().await.expect("headlamp zone ready row");
     assert_eq!(record_headlamp.record_seq, 2);
     assert_eq!(
@@ -159,10 +159,10 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_then_two_ledger_rows_
         handle,
     };
 
-    // Phase 7: drain THREE boot rows:
-    //   row 1 = PowerOn → PreparingToStart
-    //   row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart
-    //   row 3 = AssemblyZoneReady(Wiper) → Idle
+    // drain THREE boot rows:
+    // row 1 = PowerOn → PreparingToStart
+    // row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart
+    // row 3 = AssemblyZoneReady(Wiper) → Idle
     power_on_to_idle(&controller).await;
     let _ = rx.recv().await.expect("power on → preparing row");
     let _ = rx

@@ -16,10 +16,10 @@ impl AmbientRoadLightModel {
         }
     }
 
-    /// Current milestone assumption:
-    /// - Baseline is daytime driving.
-    /// - Lower light mostly comes from occasional tunnel travel.
-    /// - A full day/night waveform is deferred.
+ /// Current milestone assumption:
+ /// - Baseline is daytime driving.
+ /// - Lower light mostly comes from occasional tunnel travel.
+ /// - A full day/night waveform is deferred.
     pub fn next_ambient_lux(&mut self, _epoch_secs: u64) -> u16 {
         let mut rng = rand::rng();
 

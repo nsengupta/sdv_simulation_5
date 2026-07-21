@@ -1,7 +1,7 @@
 //! Durable, non-overwriting run capture: manifest plus two flushed JSONL streams.
 //!
 //! `RunWriter` is the only way this crate creates a run directory. It never appends to or
-//! overwrites an existing run — see `docs/superpowers/specs/2026-07-17-phase-3-observation-capture-design.md`.
+//! overwrites an existing run — see `docs/DESIGN.md`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};

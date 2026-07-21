@@ -86,7 +86,7 @@ pub mod wiper_zone_contract;
 ///
 /// Holding one binds a spawned actor's lifetime to a stack scope: on drop it calls
 /// `stop(None)` so the actor shuts down at the end of the test, keeping tests isolated. Always
-/// bind it to a name (`let _guard = ..`), never `let _ = ..`, or the actor stops immediately.
+/// bind it to a name (`let _guard =..`), never `let _ =..`, or the actor stops immediately.
 pub struct ActorGuard<T: ractor::Message> {
     pub addr: ractor::ActorRef<T>,
     // Held to keep ownership of the spawned task for the guard's lifetime; never read directly
@@ -100,7 +100,7 @@ impl<T: ractor::Message> Drop for ActorGuard<T> {
         // 1. Tell the actor to stop immediately
         self.addr.stop(None);
 
-        // Note: I cannot 'await' inside a synchronous drop() function.
+        // Note: I cannot 'await' inside a synchronous drop function.
         // However, stopping the actor here is usually enough to
         // clear the mailbox for the next test.
     }
@@ -197,7 +197,7 @@ async fn wait_ambient_lux(
 /// Bind the guard to a real name to keep the actor alive for the test:
 /// `let (controller, mut actuation_rx, _guard) = install_with_actuation("ID", 16).await;`
 ///
-/// For tests that also need a specific initial headlamp state (Phase 2+), build the
+/// For tests that also need a specific initial headlamp state, build the
 /// `VehicleControllerRuntimeOptions` directly and use
 /// `VehicleController::install_and_start_with_options`.
 #[allow(dead_code)]

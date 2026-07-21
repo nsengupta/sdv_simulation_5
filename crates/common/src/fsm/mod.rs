@@ -1,8 +1,7 @@
 //! L2 operational FSM: mode ([`FsmState`]) + [`crate::fsm::transition_map`] only mutates mode.
 //!
 //! **Cut** — one twin snapshot `(FsmState, VehicleContext)` at an instant; each ledger hop is
-//! entry → exit. **Quiescence** — process external + [`FsmEvent::Internal`] hops before commit
-//! (ADR-7: `docs/adr-007-fsm-quiescence-and-cut.md`).
+//! entry → exit. **Quiescence** — process external + [`FsmEvent::Internal`] hops before commit.
 
 pub mod machineries;
 pub mod step;

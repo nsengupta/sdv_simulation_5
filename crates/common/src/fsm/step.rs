@@ -50,7 +50,7 @@ pub fn step(
         .collect();
 
     // No `remaining_assemblies` mutation needed: the countdown is now embedded inside
-    // `FsmState::PreparingToStart` / `PreparingToStop` and managed by `transition()`.
+    // `FsmState::PreparingToStart` / `PreparingToStop` and managed by `transition`.
 
     if let Some(note) = &transition_result.note {
         match note {

@@ -1,4 +1,4 @@
-//! Brain↔zone tell-back wait: retry, synthetic embed on exhaustion (ADR-7 step 6+).
+//! Brain↔zone tell-back wait: retry, synthetic embed on exhaustion.
 
 use crate::twin_runtime::constants::{ZONE_TELL_BACK_ATTEMPT_COUNT, ZONE_TELL_BACK_MAX_RETRIES};
 use crate::vehicle_state::{HeadlampContext, HeadlampOutcome, HeadlampZoneReply};

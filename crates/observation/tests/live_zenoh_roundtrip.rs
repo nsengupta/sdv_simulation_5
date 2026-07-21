@@ -1,10 +1,10 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use observation::schema::CURRENT_SCHEMA_VERSION;
 use observation::schema::v1::{
     DiagnosticKindV1, DiagnosticLevelV1, DiagnosticPayloadV1, RunId, StreamEnvelopeV1,
     UnixTimestampV1,
 };
-use observation::schema::CURRENT_SCHEMA_VERSION;
 use observation::{
     LiveMessage, LiveRecordDto, LiveSink, LiveStream, ObservationError, ZenohLiveSink,
     ZenohLiveSource,
@@ -26,9 +26,7 @@ async fn zenoh_waits_for_subscriber_then_hello_and_event() {
     let sink_task = tokio::spawn({
         let key = key.clone();
         let hello = hello.clone();
-        async move {
-            ZenohLiveSink::open_and_wait_subscriber(key, Duration::from_secs(10), hello).await
-        }
+        async move { ZenohLiveSink::open_and_wait_subscriber(key, Duration::from_secs(10), hello).await }
     });
 
     tokio::time::sleep(Duration::from_millis(200)).await;

@@ -1,4 +1,4 @@
-//! Phase 7 contract tests: Wiper as second managed assembly.
+//! Contract tests: Wiper as second managed assembly.
 //!
 //! Tests 1–7 are pure unit tests (L1 state machine, `zone_message_for_event`).
 //! Tests 8–10 are actor-level integration tests requiring the full wiper wiring.
@@ -22,7 +22,7 @@ use crate::vehicle_state::{WiperContext, WiperMessage, WiperState, WiperZoneRepl
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Turn IDs after Phase 7 boot (2 assembly barriers: headlamp + wiper).
+/// Turn IDs later boot (2 assembly barriers: headlamp + wiper).
 ///
 /// PowerOn = turn 1 (passthrough)
 /// Headlamp startup barrier = turn 2

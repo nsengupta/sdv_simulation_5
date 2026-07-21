@@ -3,20 +3,20 @@
 //! One application (`main`) typically owns both the **Digital Twin** (install + ingress via
 //! this builder) and the **Dashboard** (observation receivers wired in setup). The builder
 //! connects:
-//!   - `VehicleController` (actor tree)
-//!   - Diagnostic channel (unbounded) — caller creates, passes sender
-//!   - Transition channel (bounded)   — caller creates, passes sender
-//!   - Actuation channel              — created internally (CAN egress detail)
-//!   - CAN reader thread
-//!   - Actuation command publishers
-//!   - Ingress dispatch loop
+//! - `VehicleController` (actor tree)
+//! - Diagnostic channel (unbounded) — caller creates, passes sender
+//! - Transition channel (bounded) — caller creates, passes sender
+//! - Actuation channel — created internally (CAN egress detail)
+//! - CAN reader thread
+//! - Actuation command publishers
+//! - Ingress dispatch loop
 //!
 //! # Lifecycle
-//! 1. `TwinRuntimeBuilder::new()` — minimal defaults
+//! 1. `TwinRuntimeBuilder::new` — minimal defaults
 //! 2. `.with_car_identity(...)`, `.with_can_interface(...)`, etc.
-//! 3. `.install_controller().await` — spawns actor tree, creates actuation channel
-//! 4. `.spawn_runtime()` — spawns CAN reader, publishers, returns `JoinHandle`
-//! 5. (Gateway) `.run()` = `install_controller()` + `spawn_runtime()` + await dispatch
+//! 3. `.install_controller.await` — spawns actor tree, creates actuation channel
+//! 4. `.spawn_runtime` — spawns CAN reader, publishers, returns `JoinHandle`
+//! 5. (Gateway) `.run` = `install_controller` + `spawn_runtime` + await dispatch
 
 use anyhow::Result;
 use common::DiagnosticRecord;
@@ -64,7 +64,7 @@ enum CanIngressEnvelope {
 
 /// Assembles and runs the live Digital Twin runtime.
 ///
-/// Gateway creates channels, attaches observers, and calls [`run()`](Self::run)
+/// Gateway creates channels, attaches observers, and calls [`run`](Self::run)
 /// (or `install_controller` + `spawn_runtime` when composing capture/tee in `main`).
 pub struct TwinRuntimeBuilder {
     car_identity: Option<String>,
@@ -175,7 +175,7 @@ impl TwinRuntimeBuilder {
     /// This creates the actuation channel internally (a CAN-egress implementation detail)
     /// and spawns the `VehicleController` with all configured channels.
     ///
-    /// Must be called before [`spawn_runtime()`](Self::spawn_runtime).
+    /// Must be called before [`spawn_runtime`](Self::spawn_runtime).
     pub async fn install_controller(
         &mut self,
     ) -> Result<(VehicleController, VehicleControllerRuntimeOptions)> {
@@ -207,7 +207,7 @@ impl TwinRuntimeBuilder {
 
     /// Spawn background workers (timer tick, CAN reader, actuation publishers).
     ///
-    /// Call [`install_controller()`](Self::install_controller) first.
+    /// Call [`install_controller`](Self::install_controller) first.
     /// Returns a `JoinHandle` that resolves when the ingress dispatch loop exits.
     pub fn spawn_runtime(
         &mut self,
@@ -281,8 +281,8 @@ impl TwinRuntimeBuilder {
     /// Convenience: install controller, spawn runtime, and await the dispatch loop.
     ///
     /// Suitable for Gateway (headless). Dashboard calls
-    /// [`install_controller()`](Self::install_controller) +
-    /// [`spawn_runtime()`](Self::spawn_runtime) separately.
+    /// [`install_controller`](Self::install_controller) +
+    /// [`spawn_runtime`](Self::spawn_runtime) separately.
     pub async fn run(&mut self) -> Result<()> {
         let (controller, _) = self.install_controller().await?;
         let handle = self.spawn_runtime(controller)?;
@@ -304,7 +304,7 @@ impl Default for TwinRuntimeBuilder {
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Dedicated OS thread for blocking `read_frame()` loop.
+/// Dedicated OS thread for blocking `read_frame` loop.
 fn spawn_can_reader_thread(
     can_interface: String,
     front_headlamp_policy: Arc<Mutex<FrontHeadlampPolicy>>,

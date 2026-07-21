@@ -35,7 +35,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_th
         handle,
     };
 
-    // Phase 7: bridge to Idle, drain THREE startup rows (PowerOn + Headlamp Ready + Wiper Ready).
+    // bridge to Idle, drain THREE startup rows (PowerOn + Headlamp Ready + Wiper Ready).
     power_on_to_idle(&controller).await;
     let _ = rx.recv().await.expect("power on → preparing row");
     let _ = rx
@@ -102,7 +102,7 @@ async fn given_actor_driving_in_dark_when_ack_wait_elapses_without_timer_tick_th
         Duration::from_secs(1),
     )
     .await;
-    // Phase 2: ActuationIncomplete(On) recovers to Ready (assembly active), not Off.
+    // ActuationIncomplete(On) recovers to Ready (assembly active), not Off.
     wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_secs(1)).await;
 }
 
@@ -127,7 +127,7 @@ async fn given_actor_on_requested_when_ack_before_deadline_then_no_spontaneous_i
         handle,
     };
 
-    // Phase 7: bridge to Idle, drain THREE startup rows (PowerOn + Headlamp Ready + Wiper Ready).
+    // bridge to Idle, drain THREE startup rows (PowerOn + Headlamp Ready + Wiper Ready).
     power_on_to_idle(&controller).await;
     let _ = rx.recv().await.expect("power on → preparing row");
     let _ = rx

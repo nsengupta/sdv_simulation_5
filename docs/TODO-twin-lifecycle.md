@@ -6,17 +6,18 @@ Park-before-Stop, shutdown coordinator).
 Each item below is a **compile-ready unit**: merging it should leave `cargo build` / `cargo test`
 green. Functionality may be incomplete until later items land.
 
-Shell types live in `crates/gateway/src/twin_lifecycle.rs` (TL-0, done).
+Shell types live in `crates/gateway/src/twin_lifecycle.rs` — Gateway-only
+`ShutdownCoordinator` stub (no Dashboard lifecycle enum).
 
 ---
 
-## TL-0 — Lifecycle types (compile-ready shell)
+## TL-0 — Gateway shutdown stub
 
-**Status:** Done.  
+**Status:** Done (minimal).  
 **Files:** `crates/gateway/src/twin_lifecycle.rs`, `crates/gateway/src/lib.rs`
 
-- `TwinLifecyclePhase`, `TwinLifecycleCoordinator`, `ShutdownCoordinator` (stub `ensure_stopped_before_exit`).
-- Unit test: install → started phase transition.
+- `ShutdownCoordinator` with stub `ensure_stopped_before_exit(&VehicleController)`.
+- No process-phase enum; Dashboard does not participate in twin availability.
 
 ---
 
@@ -103,32 +104,32 @@ Shell types live in `crates/gateway/src/twin_lifecycle.rs` (TL-0, done).
 **Implemented:**
 
 - [`README.md`](../README.md) — section **Dashboard app and twin lifecycle** (composition, trust model, keys, CAN-before-Start, run order, `q` limitation, gateway vs dashboard).
-- [`DESIGN.md`](../DESIGN.md) §16.3 — cross-link to README.
+- [`archive/DESIGN-iteration-4.md`](archive/DESIGN-iteration-4.md) §16.3 — cross-link to README.
 
 **Acceptance:** docs only; no code change required.
 
 ---
 
-## TL-6 — Shutdown coordinator (Quit → Stop → disband)
+## TL-6 — Gateway shutdown (Ctrl+C → Stop → disband)
 
-**Status:** Not started (stub exists). **Deferred** to [`PHASES.md` Phase 9](PHASES.md#phase-9--shutdown-disband-polish-later) (after CAN E2E gate, Phase 4).  
-**Goal:** Quit runs Stop if needed, waits for `Off`, tears down actors and ingress.
+**Status:** Not started (stub exists). **Deferred** — see [`PLAN.md`](PLAN.md) / README TBD.  
+**Goal:** Gateway signal (Ctrl+C or equivalent) runs Stop if needed, waits for `Off`, tears
+down actors and ingress, finishes observation capture. **Dashboard is oblivious** (live link
+drops; no twin mailbox from the TUI).
 
 **Files:**
 
 - `crates/gateway/src/twin_lifecycle.rs` — implement `ShutdownCoordinator::ensure_stopped_before_exit`
-- `crates/gateway/src/gateway_runtime.rs` — `stop_runtime()` or `JoinHandle` abort + actor stop
-- `crates/tui_dashboard/src/main.rs` — on `q`/`Esc`, call coordinator before exit
+- `crates/gateway/src/gateway_runtime.rs` / `main.rs` — wire Ctrl+C (or cancel) to the coordinator
 - `crates/common/src/twin_runtime/controller/vehicle_controller.rs` — `stop()` / await actor join if missing
 
 **Changes:**
 
-1. Implement coordinator: if phase `Started`, `send_power_off`; poll snapshot until `FsmState::Off` or timeout.
-2. Stop `VirtualCarActor` (and join spawn handle); stop CAN reader / dispatch loop.
-3. `mark_disbanded()`.
-4. Dashboard: wire quit through coordinator.
+1. On Gateway exit signal: `send_power_off` if FSM not already `Off`; poll until `Off` or timeout.
+2. Stop `VirtualCarActor` (join spawn handle); stop CAN reader / dispatch loop; finish tee.
+3. Do **not** call this from Dashboard quit.
 
-**Acceptance:** `cargo test -p gateway -p tui_dashboard -p common`; manual: quit after Start triggers stop sequence.
+**Acceptance:** `cargo test -p gateway -p common`; manual: Ctrl+C Gateway while emulator runs leaves a clean observation run and no hung actors.
 
 ---
 
@@ -144,7 +145,8 @@ Shell types live in `crates/gateway/src/twin_lifecycle.rs` (TL-0, done).
 
 **Changes:**
 
-1. After last `PreparingToStop` commit lands on `Off`, signal lifecycle completion (channel or callback to `TwinLifecycleCoordinator`).
+1. After last `PreparingToStop` commit lands on `Off`, signal Gateway completion (channel or
+   callback the `ShutdownCoordinator` can await).
 2. TL-6 coordinator waits on this signal instead of polling alone.
 
 **Acceptance:** compile + unit/integration test: power_on_to_idle → power_off → assert actor stopped.
@@ -186,10 +188,10 @@ TL-8 parallel anytime after TL-1
 
 | Item | Doc |
 |---|---|
-| CAN `0x100` → PowerOn/PowerOff | [`PHASES.md` Phase 1](PHASES.md#phase-1--can-lifecycle--silent-ignore-while-off) |
-| Emulator echo / CSV | [`PHASES.md` Phase 2](PHASES.md#phase-2--emulator-scenario-runner-echo--generate) |
-| Observation files + replay | [`PHASES.md` Phases 3, 7](PHASES.md) |
-| Engineer ledger heartbeat | `DESIGN.md` §15.5 |
-| Gateway process split | [`PHASES.md` Phase 6](PHASES.md#phase-6--split-gateway-and-dashboard-processes) |
-| TL-6 / TL-7 / TL-8 | [`PHASES.md` Phase 9](PHASES.md#phase-9--shutdown-disband-polish-later) |
+| CAN `0x100` → PowerOn/PowerOff | [`PLAN.md`](PLAN.md) Phase 1 |
+| Emulator echo / CSV | [`PLAN.md`](PLAN.md) Phase 2 |
+| Observation files + replay | [`PLAN.md`](PLAN.md) Phases 3, 8 |
+| Engineer ledger heartbeat | [`archive/DESIGN-iteration-4.md`](archive/DESIGN-iteration-4.md) §15.5 |
+| Gateway process split | [`PLAN.md`](PLAN.md) Phase 6 |
+| TL-6 / TL-7 / TL-8 | [`PLAN.md`](PLAN.md) Phase 10 |
 | Target architecture overview | [`ARCHITECTURE-OVERVIEW.md`](ARCHITECTURE-OVERVIEW.md) |

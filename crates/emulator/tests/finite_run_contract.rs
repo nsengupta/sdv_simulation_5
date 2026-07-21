@@ -83,7 +83,7 @@ fn readings_limit_writes_exact_order_and_count() {
         LifecycleCommand::from_can_frame(&sink.frames[8]),
         Some(LifecycleCommand::PowerOff)
     );
-    // interruptible_sleep slices TICK into 10 ms pieces
+ // interruptible_sleep slices TICK into 10 ms pieces
     assert_eq!(sleeps.len(), 10);
     assert!(sleeps.iter().all(|d| *d == Duration::from_millis(10)));
     assert_eq!(
@@ -112,14 +112,14 @@ fn stop_flag_after_first_tick_writes_trailer_once() {
         &mut source,
         SessionConfig { max_readings: None },
         |_| {
-            // After the runner sleeps post-tick-1, request stop.
+ // After the runner sleeps post-tick-1, request stop.
             stop.store(true, Ordering::SeqCst);
         },
         || stop.load(Ordering::SeqCst),
     )
     .unwrap();
 
-    // PowerOn + 1 triple + Rpm0 + PowerOff = 6 frames
+ // PowerOn + 1 triple + Rpm0 + PowerOff = 6 frames
     assert_eq!(sink.frames.len(), 6);
     assert_eq!(
         VssSignal::from_can_frame(&sink.frames[4]),

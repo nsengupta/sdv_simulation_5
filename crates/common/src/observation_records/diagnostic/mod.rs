@@ -42,7 +42,9 @@ pub enum DiagnosticLevel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticKind {
     /// Free-form only when no stable variant exists yet.
-    Text { text: String },
+    Text {
+        text: String,
+    },
 
     Boot,
 
@@ -59,12 +61,19 @@ pub enum DiagnosticKind {
     },
 
     /// Rain policy input changed (fact for rain↔wiper proof).
-    RainChanged { raining: bool },
+    RainChanged {
+        raining: bool,
+    },
 
     /// Wiper motion changed (fact for rain↔wiper proof). Not an actuator ACK.
-    WiperMotionChanged { wiping: bool },
+    WiperMotionChanged {
+        wiping: bool,
+    },
 
-    ActuationFailure { action: String, error: String },
+    ActuationFailure {
+        action: String,
+        error: String,
+    },
     TransitionSinkFull,
     TransitionSinkClosed,
 }

@@ -1,6 +1,6 @@
 //! Diagnostic-record sink abstraction and domain helpers (L4-facing emission plumbing).
 
-use super::{DiagnosticLevel, DiagnosticKind, DiagnosticRecord};
+use super::{DiagnosticKind, DiagnosticLevel, DiagnosticRecord};
 use crate::fsm::FrontHeadlampIncompleteCause;
 use crate::observation_records::transition::SessionClock;
 use tokio::sync::mpsc;
@@ -72,11 +72,7 @@ pub fn diag_wiper_motion_changed(clock: &SessionClock, wiping: bool) -> Diagnost
     DiagnosticRecord::info(clock, SOURCE, DiagnosticKind::WiperMotionChanged { wiping })
 }
 
-pub fn diag_actuation_failure(
-    clock: &SessionClock,
-    action: &str,
-    err: &str,
-) -> DiagnosticRecord {
+pub fn diag_actuation_failure(clock: &SessionClock, action: &str, err: &str) -> DiagnosticRecord {
     DiagnosticRecord::error(
         clock,
         SOURCE,
@@ -89,13 +85,7 @@ pub fn diag_actuation_failure(
 
 /// Warning surfaced from a `DomainAction::LogWarning` intent (free-form until a stable kind exists).
 pub fn diag_warning(clock: &SessionClock, text: impl Into<String>) -> DiagnosticRecord {
-    DiagnosticRecord::warning(
-        clock,
-        SOURCE,
-        DiagnosticKind::Text {
-            text: text.into(),
-        },
-    )
+    DiagnosticRecord::warning(clock, SOURCE, DiagnosticKind::Text { text: text.into() })
 }
 
 pub fn diag_transition_sink_full(clock: &SessionClock) -> DiagnosticRecord {

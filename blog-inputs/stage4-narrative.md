@@ -201,22 +201,22 @@ does not need to know.
 
 ---
 
-### Design decision 5 — FSM state is the countdown (Phase 9 refinement)
+### Design decision 5 — FSM state is the countdown
 
-An intermediate design (Phase 8) embedded `&'static [AssemblyId]` in the
+An intermediate design embedded `&'static [AssemblyId]` in the
 `PreparingToStart` struct variant and kept a parallel `VehicleContext::remaining_assemblies`
-field for the live countdown.  A code review during Phase 8 revealed a **temporal mismatch**:
+field for the live countdown.  A code review revealed a **temporal mismatch**:
 `transition()` had to peek ahead into a future value of `remaining_assemblies` that was only
 mutated *later* in `step.rs`.
 
 The fix collapsed the two representations into one.  The countdown moved into the FSM state:
 
 ```rust
-// Before (Phase 8 intermediate)
+// Before (intermediate)
 PreparingToStart { assemblies: &'static [AssemblyId] }  // always ALL_ASSEMBLIES, never shrinks
 VehicleContext::remaining_assemblies: BTreeSet<AssemblyId>  // the live countdown
 
-// After (Phase 9 final)
+// After (final)
 PreparingToStart(BTreeSet<AssemblyId>)  // shrinks on every AssemblyZoneReady
 // VehicleContext::remaining_assemblies — DELETED
 ```

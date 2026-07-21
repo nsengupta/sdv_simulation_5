@@ -2,7 +2,7 @@
 //! explicit archival DTOs projected from live `common::facade` records.
 //!
 //! Every DTO here is a deliberate mirror of a live record, never a direct serialization of it
-//! (see `docs/superpowers/specs/2026-07-17-phase-3-observation-capture-design.md`). Projection
+//! (see `docs/DESIGN.md`). Projection
 //! functions map every live enum variant explicitly; there are no wildcard arms, so a future
 //! live variant fails to compile here rather than being silently dropped or misfiled.
 
@@ -29,10 +29,9 @@ use common::fsm::FrontHeadlampIncompleteCause;
 use crate::ObservationError;
 use crate::schema::CURRENT_SCHEMA_VERSION;
 
-const TIMESTAMP_DISPLAY_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] =
-    time::macros::format_description!(
-        "[year]-[month]-[day] | [hour]:[minute]:[second]:[subsecond digits:9] (UTC)"
-    );
+const TIMESTAMP_DISPLAY_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] = time::macros::format_description!(
+    "[year]-[month]-[day] | [hour]:[minute]:[second]:[subsecond digits:9] (UTC)"
+);
 
 const MAX_NANOSECOND: u32 = 999_999_999;
 
@@ -203,7 +202,7 @@ impl RunMetadata {
     }
 }
 
-/// Optional, deliberately narrow scenario provenance. Phase 3 live capture always writes `None`.
+/// Optional, deliberately narrow scenario provenance. File capture always writes `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenarioMetadata {
     pub name: String,
@@ -319,16 +318,25 @@ pub enum DiagnosticLevelV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DiagnosticKindV1 {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Boot,
     TimerTick,
     HeadlampActuationUnconfirmed {
         on: bool,
         cause: FrontHeadlampIncompleteCauseV1,
     },
-    RainChanged { raining: bool },
-    WiperMotionChanged { wiping: bool },
-    ActuationFailure { action: String, error: String },
+    RainChanged {
+        raining: bool,
+    },
+    WiperMotionChanged {
+        wiping: bool,
+    },
+    ActuationFailure {
+        action: String,
+        error: String,
+    },
     TransitionSinkFull,
     TransitionSinkClosed,
 }
@@ -513,9 +521,7 @@ pub fn ledger_envelope(
 
 fn project_diagnostic_kind(kind: &DiagnosticKind) -> DiagnosticKindV1 {
     match kind {
-        DiagnosticKind::Text { text } => DiagnosticKindV1::Text {
-            text: text.clone(),
-        },
+        DiagnosticKind::Text { text } => DiagnosticKindV1::Text { text: text.clone() },
         DiagnosticKind::Boot => DiagnosticKindV1::Boot,
         DiagnosticKind::TimerTick => DiagnosticKindV1::TimerTick,
         DiagnosticKind::HeadlampActuationUnconfirmed { on, cause } => {
@@ -524,12 +530,12 @@ fn project_diagnostic_kind(kind: &DiagnosticKind) -> DiagnosticKindV1 {
                 cause: project_live_incomplete_cause(*cause),
             }
         }
-        DiagnosticKind::RainChanged { raining } => DiagnosticKindV1::RainChanged {
-            raining: *raining,
-        },
-        DiagnosticKind::WiperMotionChanged { wiping } => DiagnosticKindV1::WiperMotionChanged {
-            wiping: *wiping,
-        },
+        DiagnosticKind::RainChanged { raining } => {
+            DiagnosticKindV1::RainChanged { raining: *raining }
+        }
+        DiagnosticKind::WiperMotionChanged { wiping } => {
+            DiagnosticKindV1::WiperMotionChanged { wiping: *wiping }
+        }
         DiagnosticKind::ActuationFailure { action, error } => DiagnosticKindV1::ActuationFailure {
             action: action.clone(),
             error: error.clone(),
@@ -733,18 +739,15 @@ pub fn ledger_from_envelope(
         next_state: live_fsm_state(&env.payload.next_state),
         old_ctx: live_vehicle_context(&env.payload.old_ctx),
         current_ctx: live_vehicle_context(&env.payload.current_ctx),
-        actions: env
-            .payload
-            .actions
-            .iter()
-            .map(live_domain_action)
-            .collect(),
+        actions: env.payload.actions.iter().map(live_domain_action).collect(),
     })
 }
 
 fn intern_source(source: &str) -> &'static str {
     static CACHE: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
-    let mut guard = CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let cache = guard.get_or_insert_with(HashMap::new);
     if let Some(existing) = cache.get(source) {
         return existing;
@@ -775,12 +778,12 @@ fn live_diagnostic_kind(kind: &DiagnosticKindV1) -> Result<DiagnosticKind, Obser
                 cause: live_incomplete_cause_for_diagnostic(*cause),
             }
         }
-        DiagnosticKindV1::RainChanged { raining } => DiagnosticKind::RainChanged {
-            raining: *raining,
-        },
-        DiagnosticKindV1::WiperMotionChanged { wiping } => DiagnosticKind::WiperMotionChanged {
-            wiping: *wiping,
-        },
+        DiagnosticKindV1::RainChanged { raining } => {
+            DiagnosticKind::RainChanged { raining: *raining }
+        }
+        DiagnosticKindV1::WiperMotionChanged { wiping } => {
+            DiagnosticKind::WiperMotionChanged { wiping: *wiping }
+        }
         DiagnosticKindV1::ActuationFailure { action, error } => DiagnosticKind::ActuationFailure {
             action: action.clone(),
             error: error.clone(),

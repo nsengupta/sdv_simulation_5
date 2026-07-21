@@ -1,7 +1,7 @@
 //! Contract tests for `PreparingToStart` / `PreparingToStop` FSM states and their
 //! associated vocabulary (`StartAssemblies`, `StopAssemblies`).
 //!
-//! Phase 9 renames the variants to tuple style and moves the countdown into the state
+//! A later redesign renamed the variants to tuple style and moves the countdown into the state
 //! itself (`BTreeSet<AssemblyId>`), eliminating `VehicleContext::remaining_assemblies`.
 
 use std::collections::BTreeSet;
@@ -152,7 +152,7 @@ fn test_zone_message_for_event_returns_some_during_idle() {
     }
 }
 
-// --- Phase 7: RainsStarted self-loop in Idle ---
+// ---
 
 #[test]
 fn given_rains_started_in_idle_when_stepped_then_self_loop_with_no_fsm_actions() {
@@ -207,7 +207,7 @@ fn test_stop_assemblies_excluded_from_ledger_record() {
     );
 }
 
-// ── Phase 9 tests — shrinking BTreeSet countdown ──────────────────────────────────────
+// ---
 
 #[test]
 fn test_preparing_to_start_carries_assembly_ids() {

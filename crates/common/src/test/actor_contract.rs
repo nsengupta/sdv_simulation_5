@@ -106,7 +106,7 @@ async fn power_off_while_off_is_silent_then_power_on_starts_normally() {
 
 #[tokio::test]
 async fn scenario_raw_transition_records_are_emitted_in_order() {
-    // Phase 1: PowerOn → PreparingToStart (seq 1), AssembliesReady → Idle (seq 2),
+    // PowerOn → PreparingToStart (seq 1), AssembliesReady → Idle (seq 2),
     // then UpdateRpm(1500) → Driving (seq 3).
     let (tx, mut rx) = mpsc::channel(16);
 
@@ -127,8 +127,8 @@ async fn scenario_raw_transition_records_are_emitted_in_order() {
         handle,
     };
 
-    // Phase 7: Off → PreparingToStart → {AssemblyZoneReady(Headlamp)} →
-    //           {AssemblyZoneReady(Wiper)} → Idle produces THREE ledger rows.
+    // Off → PreparingToStart → {AssemblyZoneReady(Headlamp)} →
+    // {AssemblyZoneReady(Wiper)} → Idle produces THREE ledger rows.
     // Drain all three before queuing user events.
     power_on_to_idle(&controller).await;
     let row1 = rx.recv().await.expect("Missing row 1 (PowerOn)");
@@ -230,7 +230,7 @@ async fn scenario_log_warning_is_routed_to_diagnostic_sink() {
 
     // Drive Off → PreparingToStart → Idle → Driving → ExtremeOperationWarning (redline),
     // which emits the speed-threshold LogWarning intent.
-    // Phase 5: startup barrier drains automatically; wait for Idle before sending events.
+    // startup barrier drains automatically; wait for Idle before sending events.
     power_on_to_idle(&controller).await;
     for evt in [
         FsmEvent::UpdateAmbientLux(crate::vehicle_physics::LUX_ON_THRESHOLD + 100),
@@ -283,7 +283,7 @@ async fn scenario_actuation_ack_round_trip_via_helper() {
         handle,
     };
 
-    // Phase 1: bridge to Idle before sending lux (lux in PreparingToStart is a no-op).
+    // bridge to Idle before sending lux (lux in PreparingToStart is a no-op).
     power_on_to_idle(&controller).await;
     controller
         .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
@@ -333,7 +333,7 @@ async fn scenario_actuation_ack_surfaces_confirmation_on_diagnostic_sink() {
         handle,
     };
 
-    // Phase 1: bridge to Idle before sending lux.
+    // bridge to Idle before sending lux.
     power_on_to_idle(&controller).await;
     controller
         .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
@@ -391,7 +391,7 @@ async fn scenario_actuation_nack_round_trip_via_helper() {
         handle,
     };
 
-    // Phase 1: bridge to Idle before sending lux.
+    // bridge to Idle before sending lux.
     power_on_to_idle(&controller).await;
     controller
         .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
@@ -405,7 +405,7 @@ async fn scenario_actuation_nack_round_trip_via_helper() {
     ));
 
     inject_matching_nack(&controller, &command).await;
-    // Phase 2: NACK on ON request → ActuationIncomplete(On) → Ready (assembly active, lamp dark).
+    // NACK on ON request → ActuationIncomplete(On) → Ready (assembly active, lamp dark).
     crate::test::wait_headlamp_state(
         &controller,
         HeadlampState::Ready,

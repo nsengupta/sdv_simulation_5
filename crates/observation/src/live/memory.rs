@@ -19,10 +19,7 @@ pub struct MemoryLiveLink;
 impl MemoryLiveLink {
     pub fn pair() -> (MemoryLiveSink, MemoryLiveSource) {
         let (tx, rx) = mpsc::channel();
-        (
-            MemoryLiveSink { tx: Some(tx) },
-            MemoryLiveSource { rx },
-        )
+        (MemoryLiveSink { tx: Some(tx) }, MemoryLiveSource { rx })
     }
 }
 

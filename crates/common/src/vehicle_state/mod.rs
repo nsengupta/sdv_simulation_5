@@ -1,4 +1,4 @@
-//! L1 vehicle state: per-zone alphabet (ADR-5), contexts, and [`VehicleContext`].
+//! L1 vehicle state: per-zone alphabet, contexts, and [`VehicleContext`].
 //!
 //! Each zone exposes `{Zone}State`, `{Zone}Message`, `{Zone}Outcome` where applicable.
 //! **L1 handler pattern:** `{Zone}Context::on_receiving_message(msg, now) -> {Zone}ZoneReply` (headlamp
@@ -45,7 +45,7 @@ pub struct VehicleContext {
 
 impl VehicleContext {
     /// Thin delegate retained for Step 1 so existing callers stay unchanged.
-    /// Inline-remove in Step 2 in favor of `health.is_healthy()`.
+    /// Inline-remove in Step 2 in favor of `health.is_healthy`.
     pub fn is_healthy(&self) -> bool {
         self.health.is_healthy()
     }

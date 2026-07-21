@@ -1,7 +1,7 @@
 //! Lighting operational detector: driving in the dark without a confirmed ON lamp.
 //!
 //! Threshold: [`LUX_ON_THRESHOLD`] from [`crate::vehicle_physics`] (same as L1 headlamp zone).
-//! Target layout: `fsm/detectors/` + per-state table slot — see ADR-7 § deferred.
+//! Target layout: `fsm/detectors/` + per-state table slot — see § deferred.
 
 use crate::fsm::{FsmEvent, FsmState, Operational};
 use crate::vehicle_physics::LUX_ON_THRESHOLD;
@@ -9,11 +9,11 @@ use crate::vehicle_state::{HeadlampState, VehicleContext};
 
 /// Exit cut after a hop → synthesize `Internal(LightingUnsafe)` when all guards pass.
 ///
-/// Guards (ADR-7 step 7a confirmation #1):
+/// Guards:
 /// - operational mode is **Driving** (not Idle/Off/latched danger/warning),
 /// - `ambient_lux <= LUX_ON_THRESHOLD`,
 /// - headlamp physical lamp is dark: state is `Off` (assembly not started) or `Ready`
-///   (assembly active but no lux-triggered ON command received yet).
+/// (assembly active but no lux-triggered ON command received yet).
 pub fn lighting_unsafe_detector(
     exit_state: &FsmState,
     exit_ctx: &VehicleContext,

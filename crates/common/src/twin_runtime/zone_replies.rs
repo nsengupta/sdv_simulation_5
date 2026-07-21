@@ -1,7 +1,7 @@
 //! Collected zone tell-back embeds for one external hop (L4 orchestration).
 //!
-//! Phase 7 migrated from a field-per-zone layout (`headlamp: HeadlampReplies`) to a
-//! homogeneous `HashMap<AssemblyId, ZoneReply>`.  `with_reply` and `get` replaced
+//! We migrated from a field-per-zone layout (`headlamp: HeadlampReplies`) to a
+//! homogeneous `HashMap<AssemblyId, ZoneReply>`. `with_reply` and `get` replaced
 //! `with_headlamp_ingress`.
 //!
 //! Pure tests use [`ZoneReplies::simulate_locally`].

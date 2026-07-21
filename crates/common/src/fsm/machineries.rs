@@ -11,7 +11,7 @@ pub use crate::vehicle_state::{FrontHeadlampIncompleteCause, FrontHeadlampSwitch
 
 /// All assembly IDs the brain coordinates.
 ///
-/// Single source of truth for assembly topology.  Used to seed the initial
+/// Single source of truth for assembly topology. Used to seed the initial
 /// `BTreeSet` inside `PreparingToStart` / `PreparingToStop` on the entry transitions
 /// and to populate `StartAssemblies` / `StopAssemblies` action payloads.
 pub(crate) const ALL_ASSEMBLIES: &[AssemblyId] = &[AssemblyId::Headlamp, AssemblyId::Wiper];
@@ -22,7 +22,7 @@ pub enum FsmState {
     /// Assemblies are being started.
     ///
     /// The inner `BTreeSet` holds the assembly IDs that have **not yet** acknowledged
-    /// startup (i.e., have not sent `AssemblyZoneReady`).  Each acknowledgement shrinks
+    /// startup (i.e., have not sent `AssemblyZoneReady`). Each acknowledgement shrinks
     /// the set; when it becomes empty the FSM transitions to `Idle`.
     ///
     /// The set is the authoritative countdown — `VehicleContext` carries no separate
@@ -37,18 +37,18 @@ pub enum FsmState {
     /// Assemblies are being stopped.
     ///
     /// Mirrors [`FsmState::PreparingToStart`]: the inner set holds assemblies that have
-    /// not yet acknowledged shutdown.  Empty set → `Off`.
+    /// not yet acknowledged shutdown. Empty set → `Off`.
     PreparingToStop(BTreeSet<AssemblyId>),
 }
 
 /// Identity of a managed assembly zone.
 ///
-/// Used by Phase-2+ messages to correlate zone replies with the originating assembly
+/// Used by assembly messages to correlate zone replies with the originating assembly
 /// without coupling the brain to zone-specific types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AssemblyId {
     Headlamp,
-    /// Phase-7 assembly: windshield wiper.
+    /// assembly: windshield wiper.
     Wiper,
 }
 
@@ -71,19 +71,19 @@ pub enum FsmEvent {
         cause: FrontHeadlampIncompleteCause,
     },
     TimerTick,
-    /// Brain-only hop (ADR-7): no `zone_turn`; table sets mode.
+    /// Brain-only hop: no `zone_turn`; table sets mode.
     Internal(Operational),
     /// An assembly zone has acknowledged a `BecomeOn` or `BecomeOff` tell.
     ///
     /// This is an *external* event — it arrives from an assembly actor mailbox via
     /// a drained [`crate::twin_runtime::turn_barrier::TurnBarrier`], exactly like
-    /// `FrontHeadlampOnAck`.  The FSM transition table counts down
+    /// `FrontHeadlampOnAck`. The FSM transition table counts down
     /// `ctx.remaining_assemblies` and transitions when the set becomes empty.
     AssemblyZoneReady(AssemblyId),
-    /// Rain has started falling on the windshield.  Binary fact — no intensity payload.
+    /// Rain has started falling on the windshield. Binary fact — no intensity payload.
     /// Routes to the wiper zone via `zone_message_for_event`; FSM self-loops.
     RainsStarted,
-    /// Rain has stopped.  Complement of [`Self::RainsStarted`].
+    /// Rain has stopped. Complement of [`Self::RainsStarted`].
     RainsStopped,
 }
 

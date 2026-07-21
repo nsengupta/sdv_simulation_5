@@ -107,10 +107,7 @@ async fn run_with_capture(args: GatewayArgs) -> Result<()> {
         None,
     )?;
     let writer = observation::RunWriter::create(&args.observation_dir, metadata)?;
-    eprintln!(
-        "[gateway] Observation run: {}",
-        writer.run_dir().display()
-    );
+    eprintln!("[gateway] Observation run: {}", writer.run_dir().display());
 
     let mut tee = ObservationTee::new(writer, live_sink);
     tee.record_diagnostic(&boot)

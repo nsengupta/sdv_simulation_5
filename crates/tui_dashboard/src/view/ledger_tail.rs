@@ -32,7 +32,7 @@ impl LedgerTail {
             .collect()
     }
 
-    /// Fit to a visible row budget (inner pane height), keeping the newest lines.
+ /// Fit to a visible row budget (inner pane height), keeping the newest lines.
     pub fn visible_lines(&self, width: usize, max_rows: usize) -> Vec<PaneLine> {
         let mut lines = self.lines(width);
         if max_rows == 0 {

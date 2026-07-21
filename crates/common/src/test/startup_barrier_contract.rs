@@ -1,20 +1,20 @@
-//! Phase 5 contract tests: `StartAssemblies` / `StopAssemblies` wired to real
-//! `TurnBarrier` coordination (RED → GREEN in Phase 5).
+//! Contract tests: `StartAssemblies` / `StopAssemblies` wired to real
+//! `TurnBarrier` coordination (RED → GREEN in ).
 //!
-//! ## RED in Phase 4
+//! ## Older design (RED)
 //!
-//! Phase 4 leaves `StartAssemblies` / `StopAssemblies` as no-ops in
-//! `apply_committed_quiescence`.  The FSM enters `PreparingToStart` on `PowerOn`
+//! An earlier cut left `StartAssemblies` / `StopAssemblies` as no-ops in
+//! `apply_committed_quiescence`. The FSM enters `PreparingToStart` on `PowerOn`
 //! but never transitions to `Idle` because no `AssemblyZoneReady` is committed.
 //! `wait_fsm_state(Idle, 500ms)` times out → tests 1 and 2 fail.
 //! Similarly for the shutdown path → tests 3 and 4 fail.
 //!
-//! ## GREEN in Phase 5
+//! ## Current design (GREEN)
 //!
 //! `StartAssemblies` creates a `TurnBarrier` per managed assembly, sends `BecomeOn`,
 //! and the drain loop commits `AssemblyZoneReady(Headlamp)` when the headlamp replies.
 //! The FSM transitions `PreparingToStart → Idle` (test 1) and stays in `PreparingToStart`
-//! when no reply arrives (test 2).  Likewise for shutdown (tests 3 and 4).
+//! when no reply arrives (test 2). Likewise for shutdown (tests 3 and 4).
 
 use std::time::Duration;
 

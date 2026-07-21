@@ -19,7 +19,7 @@ async fn given_twin_ingress_when_submitted_then_controller_drives_actor_state() 
     };
     let controller = VehicleController::new(actor.clone());
 
-    // Phase 1: bridge PreparingToStart → Idle before driving.
+    // bridge PreparingToStart → Idle before driving.
     power_on_to_idle(&controller).await;
     crate::test::submit_daylight_ambient(&controller).await;
     controller
@@ -47,7 +47,7 @@ async fn given_controller_when_get_snapshot_called_then_returns_readonly_snapsho
     };
     let controller = VehicleController::new(actor.clone());
 
-    // Phase 5: wait for the startup barrier to drain so both snapshot calls
+    // wait for the startup barrier to drain so both snapshot calls
     // see a stable Idle state and agree.
     power_on_to_idle(&controller).await;
 
@@ -86,7 +86,7 @@ async fn given_applied_events_when_get_snapshot_then_as_of_seq_counts_every_even
         .expect("snapshot");
     assert_eq!(fresh.as_of_seq(), 0);
 
-    // Phase 5: PowerOn → PreparingToStart (seq 1). GetStatus is enqueued before the
+    // PowerOn → PreparingToStart (seq 1). GetStatus is enqueued before the
     // headlamp ZoneReady reply arrives, so the snapshot deterministically sees seq 1.
     controller
         .submit_fsm_event(FsmEvent::PowerOn)
@@ -102,9 +102,9 @@ async fn given_applied_events_when_get_snapshot_then_as_of_seq_counts_every_even
         "PowerOn → PreparingToStart is seq 1"
     );
 
-    // Phase 7: startup barrier drains for BOTH assemblies.
-    //   seq 2: AssemblyZoneReady(Headlamp) → PreparingToStart (Wiper still pending)
-    //   seq 3: AssemblyZoneReady(Wiper) → Idle
+    // startup barrier drains for BOTH assemblies.
+    // seq 2: AssemblyZoneReady(Headlamp) → PreparingToStart (Wiper still pending)
+    // seq 3: AssemblyZoneReady(Wiper) → Idle
     wait_fsm_state(&controller, FsmState::Idle, Duration::from_millis(500)).await;
     let after_idle = controller
         .get_snapshot(Some(Duration::from_millis(250)))
@@ -151,7 +151,7 @@ async fn given_power_on_then_power_off_facade_when_idle_then_state_is_off() {
     };
     let controller = VehicleController::new(actor);
 
-    // Phase 1: bridge through PreparingToStart → Idle → PreparingToStop → Off.
+    // bridge through PreparingToStart → Idle → PreparingToStop → Off.
     power_on_to_idle(&controller).await;
     power_off_to_off(&controller).await;
 

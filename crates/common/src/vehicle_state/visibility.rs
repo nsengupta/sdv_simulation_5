@@ -1,6 +1,6 @@
 //! Visibility zone (L1): alphabet + context.
 //!
-//! Dumb lux store; headlamp owns policy. **ADR-5:** [`VisibilityState`],
+//! Dumb lux store; headlamp owns policy. **:** [`VisibilityState`],
 //! [`VisibilityMessage`], [`VisibilityOutcome`].
 
 /// L1 visibility snapshot.

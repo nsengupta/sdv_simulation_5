@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase A layering check: gateway must import common only via ::facade (not fsm/twin_runtime/…).
+# Library-pyramid check: gateway must import common only via ::facade (not fsm/twin_runtime/…).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 violations="$(rg 'common::(fsm|engine|twin_runtime|digital_twin|published|vehicle_physics|vehicle_state|vehicle_constants|vehicle_kinematics|diagnostic|transition_sink|observation_records)::' \

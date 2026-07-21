@@ -67,7 +67,7 @@ fn assert_no_lighting_unsafe_internal_hop(result: &crate::twin_runtime::Quiescen
     );
 }
 
-/// ADR-7 confirmation #1: pending ON (ACK not yet settled) is not "unsafe" — lamp actuation in flight.
+/// confirmation #1: pending ON (ACK not yet settled) is not "unsafe" — lamp actuation in flight.
 #[test]
 fn given_driving_in_dark_when_on_requested_then_no_lighting_unsafe_internal_hop() {
     let t0 = Instant::now();
@@ -107,7 +107,7 @@ fn given_driving_in_dark_when_on_requested_then_no_lighting_unsafe_internal_hop(
 
 fn ctx_driving_dangerous_after_failed_on() -> VehicleContext {
     let mut ctx = ctx_driving_in_dark();
-    // After a failed ON attempt (Phase 2): assembly still active but lamp dark → Ready.
+    // After a failed ON attempt : assembly still active but lamp dark → Ready.
     ctx.headlamp.state = HeadlampState::Ready;
     ctx.headlamp.ack_pending_since = None;
     ctx

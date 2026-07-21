@@ -3,9 +3,9 @@
 //! Two kinds of observability output, apart from actuations:
 //!
 //! - **Transition records** ([`transition::PublishedTransitionRecord`]) — exact FSM transitions,
-//!   events, timing, and post-step context; deep visibility into how each turn is handled.
+//! events, timing, and post-step context; deep visibility into how each turn is handled.
 //! - **Diagnostic records** ([`diagnostic::DiagnosticRecord`]) — car state and context for
-//!   operator diagnosis (speed, health, visibility, rain, etc.).
+//! operator diagnosis (speed, health, visibility, rain, etc.).
 //!
 //! Record *types* live in [`transition`] and [`diagnostic`]; emission plumbing (sink traits,
 //! channel adapters, stdout observer) lives in each submodule's [`transition::sink`] and

@@ -37,7 +37,7 @@ impl PhysicalCar {
         self.rpm
     }
 
-    /// Kinematic ground speed derived from composite wheel RPM (for debug only; not published on CAN).
+ /// Kinematic ground speed derived from composite wheel RPM (for debug only; not published on CAN).
     pub fn derived_speed_kph(&self) -> f64 {
         calculate_speed_from_rpm(self.rpm)
     }
@@ -150,7 +150,7 @@ mod tests {
     fn rpm_model_high_epoch_targets_peak_band() {
         let cfg = PhysicalWorldModelConfig::daytime_tunnel_profile().rpm;
         let model = RpmModel::new(cfg.clone());
-        // Even epoch bucket → high target (flip period 15).
+ // Even epoch bucket → high target (flip period 15).
         let target = model.target_rpm_for_epoch(0);
         assert!((target - DAYTIME_TUNNEL_HIGH_TARGET_RPM).abs() < f32::EPSILON);
         let speed = calculate_speed_from_rpm(target as u16);

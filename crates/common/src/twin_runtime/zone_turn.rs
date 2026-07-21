@@ -34,7 +34,7 @@ pub struct ZoneTurnResult {
 ///
 /// Returns `None` when the FSM is in a lifecycle transition state (`PreparingToStart` or
 /// `PreparingToStop`): no zone tell is emitted for user events during assembly startup or
-/// shutdown.  For all other states, delegates to [`user_event_to_zone_tell`].
+/// shutdown. For all other states, delegates to [`user_event_to_zone_tell`].
 ///
 /// Used by `begin_fsm_turn` to decide between a zone-directed [`TurnBarrier`] and a
 /// [`PassthroughBarrier`].
@@ -49,7 +49,7 @@ pub(crate) fn zone_message_for_event(
 }
 
 /// Map a *user-originated* [`FsmEvent`] to the `(AssemblyId, ZoneMessage)` pair that must be
-/// told to the relevant zone twinlet.  Returns `None` for events that do not require a zone
+/// told to the relevant zone twinlet. Returns `None` for events that do not require a zone
 /// tell (e.g. `PowerOn`, `UpdateRpm`) or for assembly lifecycle events (`AssemblyZoneReady`),
 /// which carry their reply embedded in the barrier.
 fn user_event_to_zone_tell(event: &FsmEvent) -> Option<(AssemblyId, ZoneMessage)> {

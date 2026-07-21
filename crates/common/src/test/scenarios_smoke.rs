@@ -79,7 +79,7 @@ async fn scenario_power_on_then_drive_rpm_enters_driving() {
         handle,
     };
 
-    // Phase 5: startup barrier drains automatically.
+    // startup barrier drains automatically.
     let controller = crate::VehicleController::new(actor.clone());
     power_on_to_idle(&controller).await;
 
@@ -139,7 +139,7 @@ async fn scenario_redline_rpm_from_driving_enters_warning() {
         handle,
     };
 
-    // Phase 5: startup barrier drains automatically.
+    // startup barrier drains automatically.
     let controller = crate::VehicleController::new(actor.clone());
     power_on_to_idle(&controller).await;
 
@@ -181,7 +181,7 @@ async fn scenario_get_status_after_power_on_reports_idle() {
         handle,
     };
 
-    // Phase 5: startup barrier drains automatically when headlamp replies ZoneReady.
+    // startup barrier drains automatically when headlamp replies ZoneReady.
     let controller = crate::VehicleController::new(actor_ref.clone());
     power_on_to_idle(&controller).await;
 

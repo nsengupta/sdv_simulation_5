@@ -560,7 +560,7 @@ mod tests {
         let ledger = sample_ledger(10, 100, PublishedHeadlampState::Off);
         let pane = driver_pane(None, Some(&ledger), 64);
         let roles: Vec<_> = pane.lines.iter().map(|l| l.role).collect();
-        // Two blank lines before Notice for top padding.
+ // Two blank lines before Notice for top padding.
         assert_eq!(roles[0], LineRole::Spacer);
         assert_eq!(roles[1], LineRole::Spacer);
         assert_eq!(roles[2], LineRole::Notice);

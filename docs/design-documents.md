@@ -1,15 +1,17 @@
 # Design documents
 
-**Purpose:** index of architecture references, state-transition diagrams, and deep-dive docs
-for Iteration 4. The README is the narrative overview; **this document is the catalogue**.
+**Purpose:** catalogue of architecture references. **[`README.md`](../README.md)** is the
+narrative overview and source of truth for what this repo contains.
 
----
-
-| Document                                                                                           | Content                                                       |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [`DESIGN.md`](../DESIGN.md)                                                                        | Consolidated architecture reference (full Iteration 4 design) |
-| [`diagrams/brain_transitions.md`](../diagrams/brain_transitions.md)                                | Brain FSM state transition diagram (Mermaid)                  |
-| [`diagrams/headlamp_assembly_state_transition.md`](../diagrams/headlamp_assembly_state_transition.md) | Headlamp assembly lifecycle diagram (Mermaid)                 |
-| [`diagrams/wiper_assembly_state_transition.md`](../diagrams/wiper_assembly_state_transition.md)    | Wiper assembly lifecycle diagram (Mermaid)                    |
-| [`library-reorg.md`](library-reorg.md)                                                             | Library pyramid detail (L0–L6, TangleGuard)                   |
-| [`rpm-model-tutorial.md`](rpm-model-tutorial.md)                                                   | Emulator RPM model (intuition-first)                          |
+| Document | Content |
+|----------|---------|
+| [`PLAN.md`](PLAN.md) | Phases summary + important TBDs |
+| [`DESIGN.md`](DESIGN.md) | Stage 5 design decisions |
+| [`ARCHITECTURE-OVERVIEW.md`](ARCHITECTURE-OVERVIEW.md) | Topology, gap register, run order |
+| [`archive/DESIGN-iteration-4.md`](archive/DESIGN-iteration-4.md) | Brain / ROB / twin (Iteration 4) |
+| [`archive/PHASES-detailed.md`](archive/PHASES-detailed.md) | Full phase gates |
+| [`archive/`](archive/) | Iter 4 DESIGN, detailed PHASES, per-phase specs/plans — see [`archive/README.md`](archive/README.md) |
+| [`diagrams/`](../diagrams/) | Brain / headlamp / wiper Mermaid diagrams |
+| [`design-notes-pyramid-layers.md`](design-notes-pyramid-layers.md) | L0–L6 library pyramid |
+| [`TODO-twin-lifecycle.md`](TODO-twin-lifecycle.md) | Phase 10 lifecycle checklist |
+| [`TODO-simulation-5.md`](TODO-simulation-5.md) | Engineering backlog |

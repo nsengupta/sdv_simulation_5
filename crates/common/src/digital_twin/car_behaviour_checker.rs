@@ -6,12 +6,11 @@
 //! [`STATE_LAWS`], a named catalog, and exposed through the pure public entry point
 //! [`verify_state_laws`]. These are the **building blocks**: an external/offline verifier (or
 //! a test) reconstructs each **cut** `(FsmState, VehicleContext)` from a captured
-//! `PublishedTransitionRecord` — see `docs/adr-007-fsm-quiescence-and-cut.md`.
-//! stream and folds `verify_state_laws` over it. The library deliberately does **not** ship a
-//! journey-fold helper — that consumer-side concern lives outside the twin. The pure laws are
-//! an *oracle* (tests / CI / offline / async-sampled), never a PROD hot-path gate; invariants
-//! are *enforced* in the FSM transition (clamp/reject) and *announced* via diagnostics. See
-//! ADR-2 / ADR-3 / Q6 in `docs/design-notes-runtime-observation.md`.
+//! `PublishedTransitionRecord` stream and folds `verify_state_laws` over it. The library
+//! deliberately does **not** ship a journey-fold helper — that consumer-side concern lives
+//! outside the twin. The pure laws are an *oracle* (tests / CI / offline / async-sampled),
+//! never a PROD hot-path gate; invariants are *enforced* in the FSM transition (clamp/reject)
+//! and *announced* via diagnostics.
 
 use crate::fsm::FsmState;
 use crate::vehicle_physics::RPM_DRIVING_THRESHOLD;

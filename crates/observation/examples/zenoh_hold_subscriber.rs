@@ -1,8 +1,8 @@
 //! Hold a peer Zenoh subscriber open so Gateway `--zenoh` can pass its install gate.
 //!
 //! Usage:
-//!   cargo run -p observation --example zenoh_hold_subscriber -- \
-//!     --keyexpr sdv/twin/observation --hold-secs 15
+//! cargo run -p observation --example zenoh_hold_subscriber -- \
+//! --keyexpr sdv/twin/observation --hold-secs 15
 
 use std::env;
 use std::process;

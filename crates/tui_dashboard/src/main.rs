@@ -157,7 +157,7 @@ async fn require_boot_from_source(
                 if matches!(record.kind, DiagnosticKind::Boot) {
                     return Ok(record);
                 }
-                // Non-boot diagnostics before boot are unexpected; keep waiting.
+ // Non-boot diagnostics before boot are unexpected; keep waiting.
             }
             Ok(Ok(Some(_))) => continue,
             Ok(Ok(None)) => bail!("live link closed before boot diagnostic"),
@@ -740,7 +740,7 @@ mod tests {
         sink.emit(&LiveMessage::diagnostic_event(boot_env)).unwrap();
         sink.finish().unwrap();
 
-        // Consume hello (connection already set), then boot event.
+ // Consume hello (connection already set), then boot event.
         let _hello = observation::LiveSource::recv_blocking(&mut source)
             .unwrap()
             .unwrap();

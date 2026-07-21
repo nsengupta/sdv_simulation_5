@@ -1,7 +1,7 @@
 //! Transport-agnostic wiper payload codec.
 //!
 //! The wiper CAN protocol is fire-and-forget (no ACK/NACK): the gateway sends a one-byte
-//! command frame and never expects a response.  No `CorrelationId` is needed.
+//! command frame and never expects a response. No `CorrelationId` is needed.
 
 use crate::can::wire_kinds::{KIND_WIPER_CMD_START, KIND_WIPER_CMD_STOP};
 

@@ -1,6 +1,6 @@
 //! Front-headlamp zone (L1): alphabet + context + behavior.
 //!
-//! **ADR-5 alphabet:** [`HeadlampState`], [`HeadlampMessage`], [`HeadlampOutcome`].
+//! **alphabet:** [`HeadlampState`], [`HeadlampMessage`], [`HeadlampOutcome`].
 //! L1 pattern: [`HeadlampContext::on_receiving_message`] → [`HeadlampZoneReply`]; L4 demux maps outcomes.
 
 use std::time::{Duration, Instant};
@@ -10,15 +10,15 @@ use crate::vehicle_physics::{
     FRONT_HEADLAMP_OFF_ACK_WAIT, FRONT_HEADLAMP_ON_ACK_WAIT, LUX_OFF_THRESHOLD, LUX_ON_THRESHOLD,
 };
 
-// --- L1 alphabet (ADR-5) ---
+// --- L1 alphabet ---
 
 /// Snapshot — what the headlamp zone **IS**.
 ///
 /// Lifecycle:
-/// - `Off`          — assembly not started; ignores all lux events.
-/// - `Ready`        — assembly active, physical lamp dark; lux triggers `OnRequested`.
-/// - `OnRequested`  — ON command in flight; waiting for `AckOn`.
-/// - `On`           — physical lamp confirmed on.
+/// - `Off` — assembly not started; ignores all lux events.
+/// - `Ready` — assembly active, physical lamp dark; lux triggers `OnRequested`.
+/// - `OnRequested` — ON command in flight; waiting for `AckOn`.
+/// - `On` — physical lamp confirmed on.
 /// - `OffRequested` — OFF command in flight; waiting for `AckOff`.
 ///
 /// `BecomeOn` drives `Off → Ready`; `BecomeOff` drives `Ready | On → Off`.
@@ -31,11 +31,11 @@ pub enum HeadlampState {
     OffRequested,
 }
 
-/// Inputs — L4 demux feeds these (from [`crate::fsm::FsmEvent`] today; `TwinIngress` per ADR-6 later).
+/// Inputs — L4 demux feeds these (from [`crate::fsm::FsmEvent`] today; `TwinIngress` per later).
 ///
-/// Lifecycle messages (Phase 2):
-/// - `BecomeOn`  — Brain tells the assembly to start; drives `Off → Ready`.
-/// - `BecomeOff` — Brain tells the assembly to stop;  drives `Ready | On → Off`.
+/// Lifecycle messages :
+/// - `BecomeOn` — Brain tells the assembly to start; drives `Off → Ready`.
+/// - `BecomeOff` — Brain tells the assembly to stop; drives `Ready | On → Off`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadlampMessage {
     BecomeOn,
@@ -54,7 +54,7 @@ pub enum HeadlampMessage {
 /// Zone twinlet reply after one [`HeadlampMessage`] — not a full FSM/brain turn (Q5).
 ///
 /// `ctx` is the updated zone snapshot; `outcomes` are zone egress for L4 to map. The brain embeds
-/// `ctx` into [`VehicleContext`](crate::vehicle_state::VehicleContext) (phase A); toward phase C
+/// `ctx` into [`VehicleContext`](crate::vehicle_state::VehicleContext) ; toward later pyramid cuts
 /// the embed may shrink to whatever the child still sends here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeadlampZoneReply {

@@ -43,13 +43,9 @@ async fn boot_reaches_files_and_uds_client() {
     let accept = tokio::spawn({
         let uds = uds.clone();
         async move {
-            UdsLiveSink::bind_and_accept(
-                uds,
-                Duration::from_secs(5),
-                LiveMessage::hello(IDENTITY),
-            )
-            .await
-            .expect("accept")
+            UdsLiveSink::bind_and_accept(uds, Duration::from_secs(5), LiveMessage::hello(IDENTITY))
+                .await
+                .expect("accept")
         }
     });
 

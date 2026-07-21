@@ -19,7 +19,7 @@ pub enum LineRole {
     EngineerHeading,
     EngineerAssembly,
     LedgerRow,
-    /// Blank vertical rhythm between Driver segments (presentation only).
+ /// Blank vertical rhythm between Driver segments (presentation only).
     Spacer,
 }
 
@@ -28,7 +28,7 @@ pub enum LineRole {
 pub enum SegmentStyle {
     Default,
     Mute,
-    /// Driver field labels (Notice / Speed / Visibility / Weather).
+ /// Driver field labels (Notice / Speed / Visibility / Weather).
     Label,
     ZoneGreen,
     ZoneYellow,
@@ -86,7 +86,7 @@ impl DriverIcon {
 pub enum SegmentContent {
     Text(String),
     SpeedBar { cells: Vec<SpeedBarCell> },
-    /// Reserved: coloured visibility boxes (not emitted yet).
+ /// Reserved: coloured visibility boxes (not emitted yet).
     #[allow(dead_code)]
     Swatch,
     Icon(DriverIcon),
@@ -119,7 +119,7 @@ impl PaneLine {
         Self::plain(role, fit_line(text, width))
     }
 
-    /// Blank spacer row occupying `width` columns.
+ /// Blank spacer row occupying `width` columns.
     pub fn spacer(width: usize) -> Self {
         Self {
             role: LineRole::Spacer,
@@ -130,7 +130,7 @@ impl PaneLine {
         }
     }
 
-    /// Flatten to a single string (tests / width checks).
+ /// Flatten to a single string (tests / width checks).
     pub fn text(&self) -> String {
         let mut out = String::new();
         for seg in &self.segments {
@@ -152,7 +152,7 @@ impl PaneLine {
         self.text().width()
     }
 
-    /// Pad with trailing spaces so the line occupies exactly `width` columns.
+ /// Pad with trailing spaces so the line occupies exactly `width` columns.
     pub fn pad_to_width(mut self, width: usize) -> Self {
         if width == 0 {
             return self;

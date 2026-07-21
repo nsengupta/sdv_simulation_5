@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ObservationError;
 use crate::schema::CURRENT_SCHEMA_VERSION;
-use crate::schema::v1::{
-    DiagnosticPayloadV1, LedgerPayloadV1, StreamEnvelopeV1, VehicleV1,
-};
+use crate::schema::v1::{DiagnosticPayloadV1, LedgerPayloadV1, StreamEnvelopeV1, VehicleV1};
 
 /// One newline-delimited JSON object on the live UDS stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,10 +105,10 @@ impl LiveMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::CURRENT_SCHEMA_VERSION;
     use crate::schema::v1::{
         DiagnosticKindV1, DiagnosticLevelV1, RunId, UnixTimestampV1, diagnostic_envelope,
     };
-    use crate::schema::CURRENT_SCHEMA_VERSION;
     use common::facade::{DiagnosticKind, DiagnosticLevel, DiagnosticRecord, UnixTimestamp};
     use std::time::Duration;
 
@@ -163,9 +161,12 @@ mod tests {
                 stream: LiveStream::Diagnostic,
                 record: LiveRecordDto::Diagnostic(got),
             } => {
-                assert_eq!(got.payload.kind, DiagnosticKindV1::Text {
-                    text: "fixed warning".into()
-                });
+                assert_eq!(
+                    got.payload.kind,
+                    DiagnosticKindV1::Text {
+                        text: "fixed warning".into()
+                    }
+                );
                 assert_eq!(got.payload.level, DiagnosticLevelV1::Warning);
             }
             other => panic!("unexpected message: {other:?}"),

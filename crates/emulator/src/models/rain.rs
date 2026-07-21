@@ -16,7 +16,7 @@ impl RainModel {
         }
     }
 
-    /// Advance one 100 ms tick; returns whether the rain sensor reads wet.
+ /// Advance one 100 ms tick; returns whether the rain sensor reads wet.
     pub fn next_rain_detected(&mut self) -> bool {
         let mut rng = rand::rng();
 

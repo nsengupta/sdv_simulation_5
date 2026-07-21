@@ -4,27 +4,27 @@
 
 use std::time::Duration;
 
+use crate::DiagnosticKind;
+use crate::VehicleController;
 use crate::digital_twin::DigitalTwinCar;
 use crate::fsm::DomainAction;
 use crate::fsm::FsmState;
+use crate::test::ActorGuard;
 use crate::test::{
     expect_actuation_command, install_with_actuation, power_on_to_idle,
     wiper_zone_contract::wait_wiper_state,
 };
-use crate::DiagnosticKind;
-use crate::test::ActorGuard;
 use crate::twin_runtime::controller::actuation_contract::ActuationCommand;
 use crate::twin_runtime::controller::actuation_manager::{
     ActuationManager, DefaultActuationManager,
 };
 use crate::twin_runtime::controller::vehicle_controller::VehicleControllerRuntimeOptions;
-use crate::VehicleController;
-use tokio::sync::mpsc;
 use crate::twin_runtime::outcome_map::zone_outcomes_to_domain_actions;
 use crate::twin_runtime::zone_turn::ZoneOutcome;
 use crate::vehicle_state::WiperOutcome;
 use crate::vehicle_state::{VehicleContext, WiperState};
 use crate::{TwinIngressEvent, VssSignal};
+use tokio::sync::mpsc;
 
 // ── Step 2: DomainAction variants ─────────────────────────────────────────────
 

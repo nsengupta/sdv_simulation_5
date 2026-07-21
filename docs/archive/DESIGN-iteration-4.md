@@ -534,7 +534,7 @@ project those at the emit boundary using the `_at_unix` suffix above. See §15.8
 ### 15.2 Process topology and co-located clocks
 
 **Tomorrow:** Gateway may run as a separate process (CAN ingress, actuation egress, IPC
-to observers). See [`docs/PHASES.md`](docs/PHASES.md) Phases 3–7 for capture and replay.
+to observers). See [`PHASES-detailed.md`](PHASES-detailed.md) Phases 3–7 for capture and replay.
 
 **Today:** `VirtualCarActor`, `HeadlampActor`, and `WiperActor` run on the **same
 physical machine/OS**. Gateway and Dashboard binaries may be separate processes; the
@@ -660,11 +660,11 @@ captured once at **install**, before Start.
 consumes observation streams; Emulator and actuators are independent CLIs on CAN (Zenoh later).
 Dashboard **embeds Emulator core** for CSV echo or TUI driver controls. Overview:
 [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased delivery:
-[`docs/PHASES.md`](docs/PHASES.md).
+[`PHASES-detailed.md`](PHASES-detailed.md).
 
 **Transitional (today):** **`tui_dashboard`** = one process, one `main()` — twin installed
 in-process via `TwinRuntimeBuilder` + dashboard UI. This is **Phase 0 debt** until
-[`PHASES.md` Phase 6](docs/PHASES.md#phase-6--split-gateway-and-dashboard-processes).
+[`PHASES-detailed.md` Phase 6](PHASES-detailed.md#phase-6--split-gateway-and-dashboard-processes).
 The name **simulator** is reserved for a possible future umbrella binary.
 
 | Part | Target | Today (transitional) |
@@ -758,7 +758,7 @@ Session row still reflects the boot diagnostic from the twin.
 segment model for every pane line (semantic style tokens; optional future inline widgets
 such as visibility swatches and weather icons); zoned speed bar colours from **`common`**
 band constants (green ≤100, yellow ≤150, red above; full scale 160). See
-[`docs/PHASES.md`](docs/PHASES.md) Phase 5 follow-up and the Phase 5 presentation design
+[`PHASES-detailed.md`](PHASES-detailed.md) Phase 5 follow-up and the Phase 5 presentation design
 § Follow-up.
 
 **Target flow:**
@@ -788,7 +788,7 @@ respond to driver input until PowerOn**:
 
 *Implemented in Phase 1:* `VirtualCarActor` drops every non-`PowerOn` FSM event while `Off`
 before turn allocation, so pre-Start CAN cannot mutate context, contact zones, or emit ledger
-traffic. See [`docs/PHASES.md` Phase 1](docs/PHASES.md#phase-1--can-lifecycle--silent-ignore-while-off).
+traffic. See [`PHASES-detailed.md` Phase 1](PHASES-detailed.md#phase-1--can-lifecycle--silent-ignore-while-off).
 
 **Operator-facing detail:** [`README.md` — Dashboard app and twin lifecycle](README.md#dashboard-app-and-twin-lifecycle).
 
@@ -796,8 +796,8 @@ traffic. See [`docs/PHASES.md` Phase 1](docs/PHASES.md#phase-1--can-lifecycle--s
 
 **Target:** Gateway process owns install, ingress workers, and observation export. Dashboard
 process owns UI + embedded emulator; **no** in-process twin. Inter-process observation uses
-file tail or simple IPC first ([`PHASES.md` Phase 6](docs/PHASES.md)); Zenoh/uProtocol is
-[`PHASES.md` Phase 9](docs/PHASES.md).
+file tail or simple IPC first ([`PHASES-detailed.md` Phase 6](PHASES-detailed.md)); Zenoh/uProtocol is
+[`PLAN.md`](../PLAN.md) Phase 9 (live obs) / Phase 10 (shutdown).
 
 `TwinRuntimeBuilder` (Gateway-side) separates:
 
@@ -806,10 +806,10 @@ file tail or simple IPC first ([`PHASES.md` Phase 6](docs/PHASES.md)); Zenoh/uPr
 3. **Start / Stop** — via CAN lifecycle from Emulator (not dashboard → twin direct calls).
 
 **Observation capture:** human-readable diagnostic + ledger files with run-id and schema version
-([`PHASES.md` Phase 3](docs/PHASES.md)). **Replay:** dashboard standalone from stored files
-([`PHASES.md` Phase 8](docs/PHASES.md)).
+([`PHASES-detailed.md` Phase 3](PHASES-detailed.md)). **Replay:** dashboard standalone from stored files
+([`PLAN.md`](../PLAN.md) Phase 8).
 
-**Disband on Stop** — [`PHASES.md` Phase 10](docs/PHASES.md) / [`TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) TL-6/7.
+**Disband on Stop** — [`PLAN.md` Phase 10](../PLAN.md) / [`TODO-twin-lifecycle.md`](../TODO-twin-lifecycle.md) TL-6/7.
 
 ### 16.5 Gateway vs Dashboard
 

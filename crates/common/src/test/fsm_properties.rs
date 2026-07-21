@@ -6,9 +6,7 @@
 use proptest::prelude::*;
 use std::time::{Duration, Instant};
 
-use crate::fsm::{
-    DomainAction, FsmEvent, FsmState, HeadlampState, TransitionNote, transition,
-};
+use crate::fsm::{DomainAction, FsmEvent, FsmState, HeadlampState, TransitionNote, transition};
 use crate::twin_runtime::twin_turn;
 use crate::vehicle_physics::{LUX_OFF_THRESHOLD, LUX_ON_THRESHOLD};
 use crate::vehicle_state::VehicleContext;
@@ -97,7 +95,7 @@ proptest! {
         let initial_state = FsmState::Off;
         let next_state = transition(&initial_state, &event, &ctx, Instant::now());
 
-        // INVARIANT: You can NEVER go from Off directly to Driving
+ // INVARIANT: You can NEVER go from Off directly to Driving
         prop_assert_ne!(
             next_state.next_state,
             FsmState::Driving,
@@ -106,8 +104,8 @@ proptest! {
         );
     }
 
-    /// PowerOff is accepted from Idle (→ PreparingToStop) and from ExtremeOperationWarning
-    /// only when already stationary (→ PreparingToStop). Moving operational states reject it.
+ /// PowerOff is accepted from Idle (→ PreparingToStop) and from ExtremeOperationWarning
+ /// only when already stationary (→ PreparingToStop). Moving operational states reject it.
     #[test]
     fn test_power_off_shutdown_gate(
         state in arb_fsm_state(),
@@ -178,8 +176,8 @@ proptest! {
 }
 
 proptest! {
-    /// The hole the suite missed: standstill must leave ExtremeOperationWarning
-    /// without waiting for TimerTick cooldown (abrupt emulator trailer / hard stop).
+ /// The hole the suite missed: standstill must leave ExtremeOperationWarning
+ /// without waiting for TimerTick cooldown (abrupt emulator trailer / hard stop).
     #[test]
     fn extreme_operation_warning_stationary_exits_without_cooldown(
         event in arb_fsm_event(),
@@ -211,8 +209,8 @@ proptest! {
         }
     }
 
-    /// While still rolling under/over threshold, non-TimerTick events must not clear the warning
-    /// before cooldown recovery (except when stationary — covered above).
+ /// While still rolling under/over threshold, non-TimerTick events must not clear the warning
+ /// before cooldown recovery (except when stationary — covered above).
     #[test]
     fn extreme_operation_warning_stays_while_rolling_without_recovery_tick(
         rpm in 1001u16..3000u16,

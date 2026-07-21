@@ -1,4 +1,4 @@
-//! Zone-agnostic commit inputs: [`ZoneReplies`] on [`ResolvedTurn`] (Phase 7: map-based).
+//! Zone-agnostic commit inputs: [`ZoneReplies`] on [`ResolvedTurn`] (map-based).
 
 use std::time::Instant;
 
@@ -16,11 +16,11 @@ fn driving_ctx() -> VehicleContext {
     ctx
 }
 
-// --- Phase 6 regression guards (updated for Phase 7 map API) ---
+// ---
 
 #[test]
 fn test_zone_replies_simulate_locally_is_empty() {
-    // Phase 7: simulate_locally returns an empty map (no zone replies at all).
+    // simulate_locally returns an empty map (no zone replies at all).
     let r = ZoneReplies::simulate_locally();
     assert!(
         r.get(&AssemblyId::Headlamp).is_none(),
@@ -48,7 +48,7 @@ fn test_power_off_does_not_speculatively_run_zone_turn() {
 
 #[test]
 fn test_zone_replies_with_reply_is_non_default_constructor() {
-    // Phase 7: `with_reply` replaces the deleted `with_headlamp_ingress`.
+    // `with_reply` replaces the deleted `with_headlamp_ingress`.
     let embed = HeadlampZoneReply {
         ctx: HeadlampContext {
             state: HeadlampState::On,
@@ -61,7 +61,7 @@ fn test_zone_replies_with_reply_is_non_default_constructor() {
     assert_eq!(got.as_headlamp(), Some(&embed));
 }
 
-// --- Phase 7 map-shape tests ---
+// ---
 
 #[test]
 fn test_zone_replies_map_get_returns_none_for_absent_zone() {

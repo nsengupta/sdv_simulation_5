@@ -1,27 +1,27 @@
-//! Phase 4 — `VecDeque<TurnBarrier>` reorder-buffer: ordering invariants (RED → GREEN).
+//! `VecDeque<TurnBarrier>` reorder-buffer: ordering invariants (RED → GREEN).
 //!
-//! ## Why these tests are RED in Phase 3
+//! ## Why an older single-slot design fails these
 //!
-//! Phase 3 uses `pending_turn + fsm_backlog`: a second `Fsm` event arriving while a zone
-//! tell is in flight sits in `fsm_backlog` **without a turn_id**.  A manually injected
+//! An older design used `pending_turn + fsm_backlog`: a second `Fsm` event arriving while a zone
+//! tell is in flight sits in `fsm_backlog` **without a turn_id**. A manually injected
 //! `ZoneReady { turn_id: N+1 }` does not match `pending_turn { turn_id: N }` and is
-//! **dropped**.  After the front turn resolves, `pump_fsm_backlog` starts the second
+//! **dropped**. After the front turn resolves, `pump_fsm_backlog` starts the second
 //! event with the SAME `turn_id` (N+1) but a fresh zone tell to the silent headlamp;
 //! eventually all retries exhaust and a synthetic reply is committed, which carries a
 //! `LogWarning` action.
 //!
-//! Phase 4 gives every `Fsm` event its own `TurnBarrier` immediately.  The injected
+//! The reorder buffer gives every `Fsm` event its own `TurnBarrier` immediately. The injected
 //! `ZoneReply` is stored in that barrier; when the front barrier drains, the rear one
 //! drains with its **real** reply — no synthetic, no `LogWarning`.
 //!
 //! ## RED assertion
 //!
-//! `rows[1].actions.is_empty()` — in Phase 3 the rear event's synthetic reply injects
-//! `PublishedDomainAction::LogWarning`; in Phase 4 the real injected reply has no outcomes.
+//! `rows[1].actions.is_empty` — previously the rear event's synthetic reply injects
+//! `PublishedDomainAction::LogWarning`; previously the real injected reply has no outcomes.
 //!
 //! ## Timing discipline
 //!
-//! `ZONE_TELL_BACK_WAIT` in test mode is 50 ms.  All manual injections happen within
+//! `ZONE_TELL_BACK_WAIT` in test mode is 50 ms. All manual injections happen within
 //! ~5 ms of event submission (well before the first retry), so `tell_attempt` is still 0
 //! in both the actor's wait state and our injected message.
 
@@ -106,9 +106,9 @@ fn inject_timeout(controller: &VehicleController, turn_id: u64, attempt: u32) {
 
 /// Spawn a silent-headlamp controller with a fresh transition channel.
 ///
-/// `initial_headlamp_ctx` is intentionally omitted: Phase 5 sets the headlamp
+/// `initial_headlamp_ctx` is intentionally omitted: sets the headlamp
 /// to `Ready` automatically when `boot_silent` injects the `BecomeOn` zone reply
-/// for the startup barrier (turn 2).  Removing the override ensures that the actor
+/// for the startup barrier (turn 2). Removing the override ensures that the actor
 /// exercises the real `BecomeOn` path during boot.
 async fn spawn_silent(
     identity: &str,
@@ -135,24 +135,24 @@ async fn spawn_silent(
 }
 
 /// Turn ID allocated for the headlamp startup barrier (first in ALL_ASSEMBLIES).
-///   PowerOn → turn 1 (passthrough), headlamp startup → turn 2.
+/// PowerOn → turn 1 (passthrough), headlamp startup → turn 2.
 const STARTUP_BARRIER_TURN: u64 = 2;
 
 /// Turn ID allocated for the wiper startup barrier (second in ALL_ASSEMBLIES).
-///   Phase 7: wiper startup → turn 3.
+/// : wiper startup → turn 3.
 const WIPER_STARTUP_BARRIER_TURN: u64 = 3;
 
 /// First turn ID available to user-driven events after `boot_silent`.
-///   Phase 7: PowerOn=1, headlamp startup=2, wiper startup=3, first user event=4.
+/// : PowerOn=1, headlamp startup=2, wiper startup=3, first user event=4.
 const FIRST_USER_TURN: u64 = 4;
 
-/// Boot sequence for a silent-headlamp actor (Phase 7: wiper is non-silent).
+/// Boot sequence for a silent-headlamp actor (wiper is non-silent).
 ///
 /// Sends `PowerOn` (turn 1 passthrough), manually injects the headlamp `BecomeOn` `ZoneReady`
 /// reply (turn 2 — headlamp is silent), then waits for the wiper to auto-reply (turn 3 —
 /// wiper is non-silent by default), and waits for the FSM to reach `Idle`.
 /// Drains the three resulting ledger rows:
-///   PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
+/// PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
 async fn boot_silent(
     controller: &VehicleController,
     rx: &mut mpsc::Receiver<PublishedTransitionRecord>,
@@ -169,7 +169,7 @@ async fn boot_silent(
         std::time::Duration::from_millis(500),
     )
     .await;
-    // Phase 7: drain THREE ledger rows: PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
+    // drain THREE ledger rows: PowerOn + AssemblyZoneReady(Headlamp) + AssemblyZoneReady(Wiper).
     drain_n(rx, 3, std::time::Duration::from_secs(3)).await;
 }
 
@@ -177,11 +177,11 @@ async fn boot_silent(
 
 /// Two zone-directed events; rear-barrier reply arrives before front-barrier reply.
 ///
-/// Phase 4 (GREEN): `ZoneReady(4)` is stored in `barrier(4)`.  Nothing drains until
-/// `ZoneReady(3)` completes `barrier(3)`.  Both then drain in FIFO order; `rows[1]`
+/// `ZoneReady(4)` is stored in `barrier(4)`. Nothing drains until
+/// `ZoneReady(3)` completes `barrier(3)`. Both then drain in FIFO order; `rows[1]`
 /// carries the real injected reply → `actions` is empty.
 ///
-/// Phase 3 (RED): `ZoneReady(4)` is dropped (pending turn is turn 3).  After
+/// `ZoneReady(4)` is dropped (pending turn is turn 3). After
 /// `ZoneReady(3)` commits turn 3, `pump_fsm_backlog` starts lux2 with a fresh zone
 /// tell to the silent headlamp; retries exhaust → synthetic reply → `rows[1].actions`
 /// contains `LogWarning` → assertion fails.
@@ -203,7 +203,7 @@ async fn two_zone_directed_events_commit_in_arrival_order() {
         .unwrap();
 
     // Inject turn-4 reply FIRST — before the 50 ms retry timer fires (all injections at ~5 ms).
-    // Phase 4 stores it; Phase 3 drops it (pending = turn 3).
+    // stores it; drops it (pending = turn 3).
     tokio::task::yield_now().await;
     inject_zone_ready(&controller, FIRST_USER_TURN + 1, HeadlampState::Ready);
 
@@ -219,7 +219,7 @@ async fn two_zone_directed_events_commit_in_arrival_order() {
         rows[0].record_seq < rows[1].record_seq,
         "turn 3 must precede turn 4 in the ledger"
     );
-    // RED assertion: Phase 4 → injected reply (no LogWarning); Phase 3 → synthetic (LogWarning).
+    // RED assertion: → injected reply (no LogWarning); → synthetic (LogWarning).
     assert!(
         rows[1]
             .actions
@@ -234,10 +234,10 @@ async fn two_zone_directed_events_commit_in_arrival_order() {
 
 /// Three events (zone, zone, non-zone); zone replies arrive out of order.
 ///
-/// Phase 4 (GREEN): `barrier(5=UpdateRpm)` is immediately complete; after both zone
+/// `barrier(5=UpdateRpm)` is immediately complete; after both zone
 /// replies are stored and the front drains, all three commit in order with no synthetic.
 ///
-/// Phase 3 (RED): `ZoneReady(4)` dropped; lux2 restarts via pump and exhausts via timer;
+/// `ZoneReady(4)` dropped; lux2 restarts via pump and exhausts via timer;
 /// `rows[1]` is synthetic (LogWarning) → assertion fails.
 #[tokio::test]
 async fn three_events_drain_in_arrival_order_when_zone_replies_arrive_out_of_order() {
@@ -286,11 +286,11 @@ async fn three_events_drain_in_arrival_order_when_zone_replies_arrive_out_of_ord
 /// Manually exhaust front-barrier retries; rear barrier had a real reply stored
 /// before exhaustion occurred.
 ///
-/// Phase 4 (GREEN): `ZoneReady(4)` stored in `barrier(4)` before any timeout fires.
-/// Injected timeouts exhaust `barrier(3)` → synthetic commit.  Drain loop immediately
+/// `ZoneReady(4)` stored in `barrier(4)` before any timeout fires.
+/// Injected timeouts exhaust `barrier(3)` → synthetic commit. Drain loop immediately
 /// finds `barrier(4)` complete → commits with stored real reply → `rows[1].actions` empty.
 ///
-/// Phase 3 (RED): `ZoneReady(4)` dropped.  After turn 3 exhausts, `pump_fsm_backlog`
+/// `ZoneReady(4)` dropped. After turn 3 exhausts, `pump_fsm_backlog`
 /// restarts lux2 with a fresh zone tell; headlamp is silent; lux2 exhausts via timer →
 /// `rows[1]` is synthetic → `LogWarning` present → assertion fails.
 #[tokio::test]
@@ -313,7 +313,7 @@ async fn exhausted_front_barrier_unblocks_rear_with_stored_reply() {
     tokio::task::yield_now().await;
 
     // Store turn-4 reply BEFORE exhausting turn 3.
-    // Phase 4: stored in barrier(4). Phase 3: dropped (pending = turn 3).
+    // stored in barrier(4). : dropped (pending = turn 3).
     inject_zone_ready(&controller, FIRST_USER_TURN + 1, HeadlampState::Ready);
 
     // Manually exhaust turn-3 retries (attempt 0 → retry → 1 → retry → 2 → gave up).
@@ -321,7 +321,7 @@ async fn exhausted_front_barrier_unblocks_rear_with_stored_reply() {
         inject_timeout(&controller, FIRST_USER_TURN, attempt);
     }
 
-    // Turn 3 committed (synthetic). Turn 4 committed (real in Phase 4; synthetic in Phase 3).
+    // Turn 3 committed (synthetic). Turn 4 committed (real in ; synthetic in ).
     let rows = drain_n(&mut rx, 2, Duration::from_secs(3)).await;
     assert_eq!(rows.len(), 2);
     assert!(rows[0].record_seq < rows[1].record_seq);
@@ -340,15 +340,14 @@ async fn exhausted_front_barrier_unblocks_rear_with_stored_reply() {
 
 /// Drain stops when the front barrier is incomplete; only advances when front is resolved.
 ///
-/// Phase 4 (GREEN): `barrier(4=UpdateRpm)` is immediately complete but blocked by
-/// incomplete `barrier(3=lux)`.  `assert_no_row` verifies nothing drains prematurely.
-/// `ZoneReady(3)` completes the front → both drain.  `rows[1]` (UpdateRpm) has no zone
-/// reply → `actions` empty regardless of Phase; the key RED property here is that
-/// `rows[0]` (lux) must also carry no LogWarning (Phase 4 uses real reply, Phase 3 uses
-/// the injected `ZoneReady(3)` directly and commits it — this part passes in both).
+/// `barrier(4=UpdateRpm)` is immediately complete but blocked by
+/// incomplete `barrier(3=lux)`. `assert_no_row` verifies nothing drains prematurely.
+/// `ZoneReady(3)` completes the front → both drain. `rows[1]` (UpdateRpm) has no zone
+/// reply → `actions` empty. The key property is that `rows[0]` (lux) must also carry no
+/// `LogWarning` (this path uses the injected `ZoneReady(3)` directly).
 ///
-/// To make the test RED: also send a second zone event (turn 4 = lux2) so that the
-/// injected `ZoneReady(4)` before the front resolves is dropped in Phase 3.
+/// To make the older single-slot design fail: also send a second zone event (turn 4 = lux2)
+/// so that an injected `ZoneReady(4)` before the front resolves is dropped.
 #[tokio::test]
 async fn second_zone_reply_before_first_does_not_drain_anything_prematurely() {
     let (controller, mut rx, _guard) = spawn_silent("ROB-DRAIN-1").await;
@@ -366,7 +365,7 @@ async fn second_zone_reply_before_first_does_not_drain_anything_prematurely() {
 
     tokio::task::yield_now().await;
 
-    // Inject turn-4 reply first — Phase 3 drops it; Phase 4 stores it.
+    // Inject turn-4 reply first — drops it; stores it.
     inject_zone_ready(&controller, FIRST_USER_TURN + 1, HeadlampState::Ready);
 
     // Front (turn 3) still incomplete → nothing must drain yet.

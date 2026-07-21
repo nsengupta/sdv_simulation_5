@@ -4,7 +4,7 @@
 **Status:** Implemented (Phase 6 Done)  
 **Related:** [`docs/PHASES.md`](../../PHASES.md) § Phase 6,
 [`docs/ARCHITECTURE-OVERVIEW.md`](../../ARCHITECTURE-OVERVIEW.md) § transitional vs target (G5),
-[`DESIGN.md`](../../../DESIGN.md) §16 Gateway vs Dashboard,
+[`DESIGN.md`](../../DESIGN-iteration-4.md) §16 Gateway vs Dashboard,
 [Phase 3 observation capture](2026-07-17-phase-3-observation-capture-design.md),
 [Phase 5 dashboard presentation](2026-07-18-phase-5-dashboard-presentation-design.md)
 

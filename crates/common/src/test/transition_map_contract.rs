@@ -64,12 +64,7 @@ fn given_extreme_warning_when_headlamp_ack_and_stationary_then_idle() {
     ctx.powertrain.apply_rpm(0);
     ctx.powertrain.refresh_speed();
 
-    let result = transition(
-        &warning,
-        &FsmEvent::FrontHeadlampOffAck,
-        &ctx,
-        now,
-    );
+    let result = transition(&warning, &FsmEvent::FrontHeadlampOffAck, &ctx, now);
     assert_eq!(
         result.next_state,
         FsmState::Idle,

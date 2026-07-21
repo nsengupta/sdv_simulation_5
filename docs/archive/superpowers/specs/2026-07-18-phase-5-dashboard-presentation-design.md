@@ -3,7 +3,7 @@
 **Date:** 2026-07-18  
 **Status:** Approved  
 **Reference layout:** [`assets/Dashboard-format.txt`](../../../assets/Dashboard-format.txt)  
-**Related:** [`docs/PHASES.md`](../../PHASES.md), [`DESIGN.md`](../../../DESIGN.md) §16.2,
+**Related:** [`docs/PHASES.md`](../../PHASES.md), [`DESIGN.md`](../../DESIGN-iteration-4.md) §16.2,
 Phase 3 observation capture (streams unchanged)
 
 ## Goal

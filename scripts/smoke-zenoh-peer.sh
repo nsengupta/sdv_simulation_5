@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 9 Zenoh peer smoke: Gateway (twin + Zenoh tee) + hold subscriber + emulator.
+# Zenoh peer smoke: Gateway (twin + Zenoh tee) + hold subscriber + emulator.
 #
 # Prerequisites (from repo root):
 #   sudo ip link add dev vcan0 type vcan 2>/dev/null || true
@@ -67,4 +67,4 @@ if ! kill -0 "$GW_PID" 2>/dev/null; then
   exit 1
 fi
 
-echo "smoke-phase9-zenoh-peer: ok ($RUNS run dir(s))"
+echo "smoke-zenoh-peer: ok ($RUNS run dir(s))"

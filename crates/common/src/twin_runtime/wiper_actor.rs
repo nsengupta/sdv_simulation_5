@@ -1,8 +1,8 @@
 //! L4 wiper twinlet — brain **tell**s [`WiperActorMsg::Apply`]; twinlet **tell**s
 //! [`TwinMessage::ZoneReady`] immediately (no ACK protocol).
 //!
-//! Phase 7: all wiper transitions are direct — no `OffRequested`/`OnRequested` intermediate
-//! states, no ACK timer.  `post_stop` is a no-op.
+//! all wiper transitions are direct — no `OffRequested`/`OnRequested` intermediate
+//! states, no ACK timer. `post_stop` is a no-op.
 
 use async_trait::async_trait;
 use ractor::{Actor, ActorProcessingErr, ActorRef};

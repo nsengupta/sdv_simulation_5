@@ -1,6 +1,6 @@
 //! L4 turn: [`zone_turn`] then L2 [`step`], merge zone outcomes into [`DomainAction`].
 //!
-//! Actor commit uses [`commit_resolved_turn`] → [`run_to_quiescence`]. See `docs/adr-007-fsm-quiescence-and-cut.md`.
+//! Actor commit uses [`commit_resolved_turn`] → [`run_to_quiescence`].
 
 use std::time::Instant;
 
@@ -20,7 +20,7 @@ pub struct HopRecord {
     pub result: StepResult,
 }
 
-/// Full turn after 0+ internal hops (ADR-7).
+/// Full turn after 0+ internal hops.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuiescentResult {
     pub hops: Vec<HopRecord>,
@@ -67,7 +67,7 @@ pub struct ResolvedTurn {
     pub zone_replies: ZoneReplies,
 }
 
-/// Mandatory quiescence at commit boundary (ADR-7).
+/// Mandatory quiescence at commit boundary.
 pub fn commit_resolved_turn(
     initial_state: &FsmState,
     initial_ctx: &VehicleContext,
@@ -82,7 +82,7 @@ pub fn commit_resolved_turn(
     )
 }
 
-/// Mandatory quiescence loop (ADR-7): external ingress + detector-synthesized internal hops.
+/// Mandatory quiescence loop: external ingress + detector-synthesized internal hops.
 pub fn run_to_quiescence(
     initial_state: &FsmState,
     initial_ctx: &VehicleContext,

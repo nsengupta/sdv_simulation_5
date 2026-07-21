@@ -1,7 +1,7 @@
-//! Health zone (L1): state + derived predicate (ADR-5 H3 hybrid).
+//! Health zone (L1): state + derived predicate.
 //!
 //! [`HealthMessage`] / ingress deferred until complexity budget allows.
-//! `is_healthy()` is derived over the aggregate, not headlamp-style outcomes.
+//! `is_healthy` is derived over the aggregate, not headlamp-style outcomes.
 
 /// L1 health snapshot.
 pub type HealthState = VehicleHealthContext;

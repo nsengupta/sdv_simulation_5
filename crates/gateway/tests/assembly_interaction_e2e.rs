@@ -7,7 +7,7 @@
 //!
 //! Non-scope:
 //! - SocketCAN bus transport wiring (`vcan0`) and separate actuator process orchestration.
-//!   Those are covered by runtime/manual smoke scenarios and assembly-specific CAN tests.
+//! Those are covered by runtime/manual smoke scenarios and assembly-specific CAN tests.
 
 use std::time::Duration;
 
@@ -23,7 +23,9 @@ async fn wait_headlamp_state(
 ) {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let Ok(snapshot) = controller.get_snapshot(Some(Duration::from_millis(50))).await
+        if let Ok(snapshot) = controller
+            .get_snapshot(Some(Duration::from_millis(50)))
+            .await
             && snapshot.context().headlamp.state == expected
         {
             return;
@@ -35,14 +37,12 @@ async fn wait_headlamp_state(
     }
 }
 
-async fn wait_wiper_state(
-    controller: &VehicleController,
-    expected: WiperState,
-    timeout: Duration,
-) {
+async fn wait_wiper_state(controller: &VehicleController, expected: WiperState, timeout: Duration) {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if let Ok(snapshot) = controller.get_snapshot(Some(Duration::from_millis(50))).await
+        if let Ok(snapshot) = controller
+            .get_snapshot(Some(Duration::from_millis(50)))
+            .await
             && snapshot.context().wiper.state == expected
         {
             return;
@@ -66,18 +66,19 @@ async fn headlamp_ack_path() {
 
     controller.send_power_on().await.expect("power on");
     // Both twinlets must complete startup lifecycle before sending user events.
-    wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::Ready,
+        Duration::from_millis(500),
+    )
+    .await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux event");
     controller
-        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandConfirmed {
-            on_command: true,
-        })
+        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandConfirmed { on_command: true })
         .await
         .expect("ack confirm event");
     wait_headlamp_state(&controller, HeadlampState::On, Duration::from_millis(500)).await;
@@ -102,22 +103,28 @@ async fn headlamp_nack_path() {
 
     controller.send_power_on().await.expect("power on");
     // Both twinlets must complete startup lifecycle before sending user events.
-    wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::Ready,
+        Duration::from_millis(500),
+    )
+    .await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux event");
     controller
-        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandRejected {
-            on_command: true,
-        })
+        .submit_twin_ingress(TwinIngressEvent::FrontHeadlampCommandRejected { on_command: true })
         .await
         .expect("nack reject event");
     // After NACK on OnRequested → ActuationIncomplete(On) → Back to Ready (assembly active).
-    wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::Ready,
+        Duration::from_millis(500),
+    )
+    .await;
 
     let snapshot = controller
         .get_snapshot(Some(Duration::from_millis(300)))
@@ -141,19 +148,27 @@ async fn headlamp_no_response_timeout_path() {
     // Both twinlets must complete startup lifecycle (FSM → Idle) before sending user events.
     // AmbientLux during PreparingToStart is a PassthroughBarrier; the headlamp would never
     // reach OnRequested and the ACK timer would never fire.
-    wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::Ready,
+        Duration::from_millis(500),
+    )
+    .await;
     wait_wiper_state(&controller, WiperState::Ready, Duration::from_millis(500)).await;
     controller
-        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(
-            20,
-        )))
+        .submit_twin_ingress(TwinIngressEvent::Telemetry(VssSignal::AmbientLux(20)))
         .await
         .expect("low lux event");
 
     // No ACK/NACK event sent: headlamp twinlet ACK timer fires without gateway TimerTick.
     tokio::time::sleep(FRONT_HEADLAMP_ON_ACK_WAIT + Duration::from_millis(25)).await;
     // After ACK timeout → ActuationIncomplete(On) → Back to Ready (assembly active).
-    wait_headlamp_state(&controller, HeadlampState::Ready, Duration::from_millis(500)).await;
+    wait_headlamp_state(
+        &controller,
+        HeadlampState::Ready,
+        Duration::from_millis(500),
+    )
+    .await;
 
     let snapshot = controller
         .get_snapshot(Some(Duration::from_millis(300)))

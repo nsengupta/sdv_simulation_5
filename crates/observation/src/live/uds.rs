@@ -61,7 +61,10 @@ impl UdsLiveSink {
             .await
             .map_err(|()| ObservationError::Io {
                 path: path.clone(),
-                source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "failed to write hello"),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "failed to write hello",
+                ),
             })?;
 
         let (tx, rx) = mpsc::unbounded_channel();

@@ -78,7 +78,7 @@ impl VssSignal {
     /// Decode a raw CAN Frame into a VSS Signal
     pub fn from_can_frame(frame: &CanFrame) -> Option<Self> {
         // Only standard (11-bit) IDs are supported here; extended / FD-only shapes are rejected.
-        // For a standard frame, `as_raw()` is the numeric ID (0..=0x7FF).
+        // For a standard frame, `as_raw` is the numeric ID (0..=0x7FF).
         let id = match frame.id() {
             socketcan::Id::Standard(s) => s.as_raw(),
             _ => return None,

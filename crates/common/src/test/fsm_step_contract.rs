@@ -52,7 +52,7 @@ fn test_step_derive_ctx_and_warning_flow() {
 #[test]
 fn test_transition_record_carries_intended_actions_without_assembly_signals() {
     // PowerOn transitions Off → PreparingToStart, emitting StartAssemblies as an
-    // internal coordination signal.  The ledger record must exclude it while the
+    // internal coordination signal. The ledger record must exclude it while the
     // execution feed retains it so the actor can act on it.
     let result = twin_turn(
         &FsmState::Off,
@@ -125,8 +125,8 @@ fn test_step_standard_commute_flow() {
     let mut car = DigitalTwinCar::new("NASHIK-VC-001", FsmState::Off, valid_twin_context())
         .expect("non-blank identity");
 
-    // Phase 8: PreparingToStart/Stop are now struct variants carrying assembly IDs.
-    // Equality checks use matches! with { .. } wildcards.
+    // PreparingToStart/Stop are now struct variants carrying assembly IDs.
+    // Equality checks use matches! with {.. } wildcards.
     let sequence: &[(FsmEvent, fn(&FsmState) -> bool)] = &[
         (FsmEvent::PowerOn, |s| {
             matches!(s, FsmState::PreparingToStart { .. })
@@ -170,14 +170,14 @@ fn test_step_standard_commute_flow() {
 fn test_state_laws_hold_over_a_legal_journey_and_records_carry_intents() {
     // Demonstrates the intended external-verifier usage: fold the pure `verify_state_laws`
     // primitive over each captured `(state, ctx)` cut of a journey. The library ships no
-    // journey-fold helper (that consumer-side concern lives outside the twin — see ADR-1/-3);
+    // journey-fold helper (that consumer-side concern lives outside the twin — see -3);
     // a verifier/offline tool folds the primitive itself, exactly like this.
     let mut state = FsmState::Off;
     let mut ctx = valid_twin_context();
     let mut reached_warning = false;
 
-    // Phase 8: PowerOn bridges via PreparingToStart before Idle.
-    // step() initialises remaining_assemblies={Headlamp, Wiper}; both barriers must drain.
+    // PowerOn bridges via PreparingToStart before Idle.
+    // step initialises remaining_assemblies={Headlamp, Wiper}; both barriers must drain.
     for event in [
         FsmEvent::PowerOn,
         FsmEvent::AssemblyZoneReady(AssemblyId::Headlamp),
@@ -302,7 +302,7 @@ fn power_off_while_driving_requires_idle_and_preserves_state() {
     )));
 }
 
-// ── Phase 8 RED test ───────────────────────────────────────────────────────────────────
+// ---
 
 #[test]
 fn test_step_standard_commute_uses_state_embedded_assemblies() {

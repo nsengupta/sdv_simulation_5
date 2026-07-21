@@ -1,700 +1,227 @@
-# SDV Simulation 4 — Brain FSM Redesign & Actorified Assembly Twinlets
+# SDV Simulation 5 — Multi-process observation & Dashboard
 
 ---
 
-↩️ This repo is **Iteration 4** of a software-defined-vehicle (#SDV) prototype. Each iteration
+↩️ This repo is **Iteration 5** of a software-defined-vehicle (#SDV) prototype. Each iteration
 **grows on its predecessor** — reusing and refactoring what still fits, and changing structure
 where the next goal requires it.
 
-| Iteration | Repository                                                          | Focus                                                                                                             |
-| --------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 1         | [`sdv_simulation_1`](https://github.com/nsengupta/sdv_simulation_1) | First working CAN control loop                                                                                    |
-| 2         | [`sdv_simulation_2`](https://github.com/nsengupta/sdv_simulation_2) | Assembly-based zone contexts, transition ledger, diagnostics                                                      |
-| 3         | [`sdv_simulation_3`](https://github.com/nsengupta/sdv_simulation_3) | Headlamp twinlet (first actorified assembly), quiescent commit                                                    |
-| **4**     | **`sdv_simulation_4` (this repo)**                                  | **Brain FSM Redesign** — start/stop barriers, generic assembly envelopes, ROB turn queue, second assembly (Wiper) |
+| Iteration | Repository | Focus |
+| --------- | ---------- | ----- |
+| 1 | [`sdv_simulation_1`](https://github.com/nsengupta/sdv_simulation_1) | First working CAN control loop |
+| 2 | [`sdv_simulation_2`](https://github.com/nsengupta/sdv_simulation_2) | Zone contexts, transition ledger, diagnostics |
+| 3 | [`sdv_simulation_3`](https://github.com/nsengupta/sdv_simulation_3) | Headlamp twinlet, quiescent commit |
+| 4 | [`sdv_simulation_4`](https://github.com/nsengupta/sdv_simulation_4) | Brain FSM redesign, ROB, Wiper twinlet |
+| **5** | **`sdv_simulation_5` (this repo)** | **Gateway/Dashboard split, observation files + live UDS\|Zenoh, Dashboard presentation, weather/wiper on ledger** |
+
+Iteration 4 twin / ROB design (still the coordination core):  
+[`docs/archive/DESIGN-iteration-4.md`](docs/archive/DESIGN-iteration-4.md).
 
 ---
 
-## What This Iteration Is About
+## What this repository contains
 
-Iteration 4 completes the **Brain FSM Redesign**. The central goal was to replace the
-Iteration-3 monolithic `handle()` — which had 5 match arms and a fragile
-`Option<PendingBrainTurn>` — with a clean **`VecDeque<BarrierEntry>` drain loop**, a
-**re-order buffer (ROB)** pattern that decouples assembly tell-back arrival order from event
-ingress order.
+A **multi-process SDV prototype** on Linux CAN (`vcan0`):
 
-### Why a TurnBarrier?
+| Process | Crate | Owns |
+|---------|-------|------|
+| Gateway | `gateway` | Digital twin, CAN ingress, actuation, observation file tee, optional live publish |
+| Dashboard | `tui_dashboard` | Observation-only TUI (driver / engineer / ledger tail) |
+| Emulator | `emulator` | Finite or Ctrl+C CAN lifecycle + RPM / lux / rain |
+| Actuators | `front_headlamp_actuator`, `wiper_actuator` | CMD responses on CAN |
 
-The Brain actor's mailbox receives both of:
+Shared library: `common` (twin, FSM, published records). Persistence / live wire: `observation`
+(schema **v3** JSON envelopes).
 
-1. External events, coming from Controller, viz., `PowerOn`, `RainsStarted` etc.
-2. Conversational events, coming from the Assemblies, viz., `ZoneReady(Headlamp)`
-
-In Iteration 3, each CAN ingress produced a *single* pending turn. If two events - say, 
-HeadLampOn arrived while the first was still awaiting a headlamp tell-back, the second was stuffed into a
-`VecDeque` backlog. When replies arrived out of order (e.g. event B's reply arrived before
-event A's), the ledger recorded them in arrival order, violating causal consistency.
-
-**`TurnBarrier`** solves this: every ingress event gets its own barrier pushed onto a
-`VecDeque<BarrierEntry>`. Each barrier tracks which assemblies (`BTreeSet<AssemblyId>`) must
-reply before it can commit. The drain loop inspects only the **front** entry: if its
-`pending` set is non-empty, the loop stalls; once empty (or if the entry is `Passthrough`),
-it pops and commits. This guarantees that the ledger records events in ingress order
-regardless of reply arrival order.
-
-### Why `PreparingToStart` / `PreparingToStop`?
-
-Iteration 3 had no formal power-cycle protocol: `IgnitionOffReset` was handled speculatively
-in the actor code. The new FSM introduces two explicit preparing states:
-
-- **`PreparingToStart(BTreeSet<AssemblyId>)`** — entered on `PowerOn`. The Brain emits
-  `StartAssemblies` domain actions (→ `BecomeOn` tells to each assembly) and counts down
-  `AssemblyZoneReady` acknowledgements. When the set empties, the FSM transitions to `Idle`.
-- **`PreparingToStop(BTreeSet<AssemblyId>)`** — entered on `PowerOff` from `Idle`. Symmetric
-  shutdown: emit `StopAssemblies` (→ `BecomeOff` tells to each assembly), count down 
-  acknowledgements, then transition to `Off`.
-
-The `BTreeSet<AssemblyId>` embedded in the state variant is the **sole authoritative
-countdown** — no duplicate state in `VehicleContext`.
-
-### Improvements over Iteration 3
-
-- **ROB ordering**: The `VecDeque<BarrierEntry>` drain loop guarantees causal consistency
-  regardless of assembly reply arrival order. Event ingress order is the ledger order.
-- **Generic assembly envelopes**: Mailbox variants `ZoneReady { zone_id, reply }` and
-  `ZoneSpontaneous { zone_id, event }` replace headlamp-specific `HeadlampZoneReady` /
-  `HeadlampZoneSpontaneous`. Adding a new assembly (Wiper) requires zero new `handle()` arms.
-- **FSM-driven lifecycle**: `StartAssemblies` / `StopAssemblies` domain actions are emitted
-  by `output()` on entry to preparing states, replacing the old manual `BecomeOn`/`BecomeOff`
-  wiring in tests.
-- **Per-assembly retry**: `ZoneTellBackTimeout { zone_id, turn_id, tell_attempt }` retries
-  each unresponsive assembly independently, rather than a single `TellBackTimeout { turn_id }`
-  that retried all zones at once.
-- **Second assembly (Wiper)**: `AssemblyId::Wiper` is now defined alongside `Headlamp` in
-  `ALL_ASSEMBLIES`. Wiper is a fully actorified twinlet with immediate transitions (no ACK protocol).
-- **`PendingBrainTurn` deleted**: The old enum and its special-case handling are fully absorbed
-  into the ROB pattern.
-- **Brain Actor's `handle()` arms**: Exactly 4 arms — `Fsm`, `ZoneReady`,
-  `ZoneTellBackTimeout`, `GetStatus`. Zero new arms per new assembly.
+**This README is the source of truth** for what the repo is and how to run it. Narrative /
+blog drafts live under [`blog-inputs/`](blog-inputs/) and are accompanying text only.
 
 ---
 
-## Vocabulary
+## What Iteration 5 added (over 4)
 
-Terms used throughout this README.
+1. **Gateway** 
+    * Owns the Digital Twin (Actors/FSM/Diagnostic Emitter/Transition Ledger Emitter)
+    * Connects to either a Unix Domain Socket or a Zenoh peer (based on a command-line parameter), using a given Key-Expression and 
+      emits records
+    * Stores the Ledger in local files as well ( _tee_ mechanism ); readiness for 'replaying 
+      logs facility' in future simulations
+2. **Dashboard**
+   * #ratatui-based TUI application; having separate panes for displaying Diagnostics, 
+     Transition and Ledger-stream
+   * Works as the Observation console
+2. **Observation capture and emission**
+    * Dashboard uses versioned `manifest.json` + `diagnostic.jsonl` + `ledger.jsonl` emitted by 
+      Gatway; transportation takes place through Unix Domain Socket or Zenoh (peer mode)
+    * Dashboard displays the captured and emitted records **live*
+    * Dashboard panes present Speed Bar, weather/wiper/visibility glyphs, Transition Ledgers,
+    * Diagnostics pane is meant for Drivers; Transition Ledger is meant for Enngineers watching 
+      behaviour of the Digital Twin
+3. **Controlled CAN data generation by emulator**
+    * Can emit N records (command-line parameter)
+    * Ensures that Digital Twin receives a `PowerOn` before any CAN message and a `PowerOff` as 
+      the last emulated CAN message
 
-| Term            | Meaning                                                                                                                                                                                                        |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Assembly**    | A managed device group identified by `AssemblyId` (`Headlamp`, `Wiper`). Each assembly has a lifecycle (`<BecomeOn>` → `Ready` → … → `<BecomeOff>` → `Off`) and a `{Assembly}Context` in `VehicleContext`.     |
-| **Twinlet**     | One assembly as a **child actor** under the BrainTwin (mailbox + timers).                                                                                                                                      |
-| **Brain**       | The digital twin overall — parent actor (`VirtualCarActor`), quiescent commit, ledger, actuation. State: `DigitalTwinCar`.                                                                                     |
-| **Zone**        | SDV industry term for a vehicle concern. The mailbox vocabulary uses `ZoneReady` / `ZoneReply` / `ZoneSpontaneousEvent` as generic envelopes — these are **not** the internal tracking type (`AssemblyId` is). |
-| **Tell**        | Brain → twinlet; **fire-and-forget** (mailbox free until tell-back or timeout).                                                                                                                                |
-| **Tell-back**   | Twinlet → Brain reply (`turn_id`, `tell_attempt`; e.g. `ZoneReady { zone_id: Headlamp, … }`).                                                                                                                  |
-| **Spontaneous** | Twinlet tell-back on its **own deadline** (e.g. ACK timer), not a new CAN ingress.                                                                                                                             |
-| **Cut**         | Snapshot `(FsmState, VehicleContext)` at one instant.                                                                                                                                                          |
-| **Quiescence**  | Multi-hop resolve to a **stable cut**; one ledger row per hop; one `apply_step`.                                                                                                                               |
-| **ROB**         | Re-order buffer (`VecDeque<BarrierEntry>`) — preserves event ingress order regardless of assembly reply arrival order.                                                                                         |
-| **TurnBarrier** | One per ingress event: tracks which assemblies have replied, holds per-assembly timers and replies.                                                                                                            |
-| **Pyramid**     | Layered modules in `common` (**L0**–**L6**, physics up to gateway/actuator binaries); acyclic imports.                                                                                                         |
-
----
-
-## Brain FSM States
-
-The Brain's operational FSM governs the Digital Twin's mode. All 7 states:
-
-```
-Off ──PowerOn──► PreparingToStart({Headlamp, Wiper})
-                       │ each AssemblyZoneReady(id) removes id
-                       ▼
-                PreparingToStart({Wiper})
-                       │ AssemblyZoneReady(Wiper) → set empty
-                       ▼
-                     Idle ──UpdateRpm > threshold──► Driving
-                       │                                  │
-                 PowerOff                           stationary
-                       │                                  │
-                       ▼                                  ▼
-           PreparingToStop({Headlamp, Wiper})           Idle
-                       │ symmetric to start
-                       ▼
-                      Off
-
-  Driving ──Internal(LightingUnsafe)──► DrivingDangerously
-  DrivingDangerously ──headlamp On or lux high or stationary──► Driving or Idle
-  Driving ──speed > 160 km/h──► ExtremeOperationWarning(now) ──TimerTick + cooldown──► Driving
-```
-
-Full transition table: [`diagrams/brain_transitions.md`](diagrams/brain_transitions.md)
-
-### Key invariants
-
-- `transition()` is a **pure function** — no I/O, no actor, no heap allocation or discovery
-  of runtime resources. It receives only `(old_state, event, ctx)` and returns
-  `(new_state, maybe_error)`. All side effects (timers, tells, ledger writes) are driven by
-  the caller from the returned state.
-- `output()` is a **pure function** — maps `(old_state, new_state, ctx)` to `Vec<FsmAction>`.
-- Both are called exactly once per event, in strict order, from the actor's `handle()` thread.
-- Execution of `tansition()` and `output()` is always single-threaded.
-- The `BTreeSet<AssemblyId>` inside `PreparingToStart` / `PreparingToStop` is the **sole
-  authoritative countdown** while waiting for responses from all the assemblies that the brain has. 
-  Each `AssemblyZoneReady(id)` event removes that `id` from the set. When the set becomes empty, the transition function maps to `Idle` (start) or `Off`
-  (stop). No separate `remaining_assemblies` field exists in `VehicleContext`.
-- External events that arrive **during** a preparing state are recorded in the ledger with
-  `applied: false` and discarded — they are never replayed. Events that arrive **after** the
-  FSM has reached `Idle` are processed according to their semantic meaning (e.g. `UpdateRpm`
-  may transition to `Driving`).
-- `PowerOff` is **rejected** (logged) in `Driving`, `DrivingDangerously`, `ExtremeOperationWarning`,
-  or `Off`.
-- Every power cycle goes through a preparing state — never `Off ↔ Idle` directly.
+Roadmap and deferred gaps: [`docs/PLAN.md`](docs/PLAN.md).  
+Design decisions (this simulation): [`docs/DESIGN.md`](docs/DESIGN.md).  
+Topology / gap register: [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md).
 
 ---
 
-## Assembly lifecycle
-
-Each assembly transitions independently through its own internal FSM, driven by
-`BecomeOn` / `BecomeOff` tells from the Brain during `PreparingToStart` /
-`PreparingToStop`. The assembly acknowledges readiness via
-`AssemblyZoneReady(AssemblyId)` tell-backs. **Internal states differ by assembly** —
-headlamp and wiper are documented separately below.
-
-### Headlamp assembly FSM
-
-Lux thresholding and hardware `AckOn` / `AckOff` intermediates:
-
-```
-Off ──BecomeOn──► Ready ──lux≤threshold──► OnRequested ──AckOn──► On
-▲                    ▲    ◄──ActIncompl(On)/Timeout──              │
-│                    │                                             │ BecomeOff
-│                    │                                             ▼
-│                    │◄──────────── AckOff ────────────────── OffRequested
-│                    │                                               │
-│                    └──────── BecomeOff ────────────────────────────┘
-└────────────────────────── BecomeOff ───────────────────────────────┘
-```
-
-**Events** (messages from Brain):
-
-- **`BecomeOn`** — Brain tell: power up the assembly lifecycle.
-- **`BecomeOff`** — Brain tell: power down the assembly lifecycle.
-
-**States:**
-
-- **Off** — Initial; no actuation. Ignores all zone messages except `BecomeOn`/`BecomeOff`.
-- **Ready** — Idle but powered; awaiting lux threshold command.
-- **OnRequested** — ON actuation sent to hardware; awaiting `AckOn`.
-- **On** — Physical lamp confirmed ON by hardware ACK.
-- **OffRequested** — OFF actuation sent to hardware; awaiting `AckOff`.
-
-Full diagram: [`diagrams/headlamp_assembly_state_transition.md`](diagrams/headlamp_assembly_state_transition.md)
-
-### Wiper assembly FSM
-
-Wiper uses a simpler three-state model (`Off` / `Ready` / `Running`) with no lux gate and
-no ACK intermediates — see [`diagrams/wiper_assembly_state_transition.md`](diagrams/wiper_assembly_state_transition.md).
-
----
-
-## Architecture (L0–L6 Pyramid)
-
-The `common` crate follows an acyclic layer pyramid. The critical invariant:
-**L2 (`fsm`) must not import L3 or above**.
-
-```
-L0  vehicle_physics          Constants, pure kinematics (no FSM, no I/O)
-L1  vehicle_state            Assemblies: powertrain, health, visibility, headlamp, wiper
-L2  fsm                      FsmState, FsmEvent, step(), transition_map — pure decision core
-L3  digital_twin, published  Twin capsule (DigitalTwinCar), serializable ledger projection
-L4  twin_runtime, sinks      VirtualCarActor, HeadlampActor, WiperActor, turn_barrier, detectors
-L5  facade                   Public surface — the only module gateway binaries may import
-L6  gateway, emulator,       Application binaries — never import internal modules
-    front_headlamp_actuator, wiper_actuator
-```
-
-Detail: [`docs/library-reorg.md`](docs/library-reorg.md)
-
----
-
-## Brain Architecture (VirtualCarActor)
-
-```text
-TwinMessage (actor mailbox)
-├── Fsm(FsmEvent)                         ← CAN ingress / detector events
-├── ZoneReady { zone_id, turn_id, reply } ← twinlet tell-back (correlated)
-├── ZoneSpontaneous { zone_id, event }    ← twinlet tell-back (unsolicited)
-├── ZoneTellBackTimeout { zone_id, … }    ← per-assembly retry deadline
-└── GetStatus(RpcReplyPort<CarSnapshot>)  ← synchronous snapshot query
-
-VirtualCarActor (Brain)
-├── barrier_queue: VecDeque<BarrierEntry>  ← ROB (Waiting / Passthrough variants)
-│   └── TurnBarrier                        ← per-assembly pending set + timers + replies
-├── on_zone_ready()                       ← matches barrier by turn_id
-├── on_zone_timeout()                     ← per-assembly retry or synthetic reply
-├── on_zone_spontaneous()                 ← unsolicited twinlet event
-├── begin_fsm_turn()                      ← pushes barrier, tells assembly(ies)
-└── try_drain_barrier_queue()             ← commits completed barriers front-to-back
-```
-
-### Tell / tell-back flow
-
-```mermaid
----
-config:
-  theme: default
-  themeVariables:
-    signalColor: "#111111"
-    signalTextColor: "#111111"
-    actorLineColor: "#111111"
-    actorTextColor: "#111111"
-    noteBkgColor: "#fff9e6"
-    noteTextColor: "#111111"
----
-sequenceDiagram
-  participant CAN as vcan0
-  participant GW as Gateway
-  participant Brain as Brain
-  participant HL as Headlamp twinlet
-  participant Act as Actuator
-  participant Sink as Sinks
-
-%% --- TURN A: LUX INGRESS (Light Blue Background) ---
-  rect rgb(215, 230, 255)
-    Note over CAN,Sink: Turn A - lux ingress
-    CAN->>GW: AmbientLux frame
-    GW->>Brain: 1 Fsm - UpdateAmbientLux
-    Brain->>Brain: begin_fsm_turn push BarrierEntry::Waiting( pending: Headlamp )
-    Brain->>HL: 2 tell Apply - fire-and-forget
-    Note over Brain: handle returns - mailbox free
-    HL->>HL: on_receiving_message - twinlet handle
-    HL-->>Brain: 3 ZoneReady( zone_id: Headlamp, reply, ... )
-    Note over Brain: on_zone_ready moves Headlamp from pending to zone_replies
-    Brain->>Brain: try_drain_barrier_queue commit
-    Brain->>Sink: ledger hop(s)
-    Brain->>GW: actuation cmd - async channel
-    GW->>CAN: CMD ON
-  end
-
-%% --- CAN ROUND-TRIP (Light Green Background) ---
-  rect rgb(220, 250, 220)
-    Note over CAN,Brain: Later - CAN round-trip
-    CAN->>Act: CMD ON
-    Act-->>CAN: ACK
-    CAN->>GW: ACK frame
-    GW-->>Brain: 4 Fsm - FrontHeadlampOnAck
-    Note over Brain: separate turn, headlamp state becomes On
-  end
-
-%% --- TIMEOUT ALTERNATIVE (Light Red Background) ---
-  rect rgb(255, 220, 220)
-    Note over HL,Brain: Timeout alternative
-    HL-->>Brain: 4 ZoneSpontaneous( zone_id: Headlamp, ... )
-    Note over Brain: on_zone_spontaneous yields synthetic FSM event
-  end
-```
-
----
-
-## Assembly Architecture (Twinlets)
-
-Both managed assemblies run as child actors under the Brain: `HeadlampActor` and
-`WiperActor`. They share the same tell / tell-back envelope (`ZoneReady`) but differ in
-whether operational transitions wait for hardware ACK.
-
-### HeadlampActor
-
-Headlamp models a full actuation round-trip: intermediate `OnRequested` / `OffRequested`
-states, an ACK timer, and spontaneous `ZoneSpontaneous` events on deadline expiry.
-
-```text
-HeadlampActorMsg (mailbox)
-├── Apply(BrainTurn)                      ← Brain tell: apply new state
-├── BecomeOn                              ← Brain tell: power up lifecycle
-├── BecomeOff                             ← Brain tell: power down lifecycle
-└── Internal(FrontHeadlampOnAck)          ← actuator ACK (spontaneous)
-
-HeadlampActor
-├── ctx: HeadlampContext                  ← domain state
-├── state_machine: AssemblyStateMachine   ← assembly lifecycle FSM
-├── ack_timer: Option<JoinHandle<...>>    ← ACK deadline timer
-├── on_receiving_message()               ← match on Apply / BecomeOn / BecomeOff
-└── send_to_brain()                       ← tell-back ZoneReady / ZoneSpontaneous
-```
-
-#### Headlamp lifecycle flow
-
-```mermaid
----
-config:
-  theme: default
-  themeVariables:
-    signalColor: "#111111"
-    signalTextColor: "#111111"
-    actorLineColor: "#111111"
-    actorTextColor: "#111111"
-    noteBkgColor: "#fff9e6"
-    noteTextColor: "#111111"
----
-sequenceDiagram
-  participant Brain as Brain
-  participant HL as HeadlampActor
-  participant HW as Hardware
-
-%% --- POWER-ON SEQUENCE (Light Blue Background) ---
-  rect rgb(215, 230, 255)
-    Note over Brain,HW: Power-on sequence
-    Brain->>HL: BecomeOn
-    HL->>HL: transition: Off to BecomeOn
-    HL->>HW: actuate power circuit
-    HW-->>HL: ACK
-    HL->>HL: transition: BecomeOn to Ready
-    HL-->>Brain: ZoneReady( zone_id: Headlamp, state: Ready )
-  end
-
-%% --- OPERATIONAL COMMAND (Light Green Background) ---
-  rect rgb(220, 250, 220)
-    Note over Brain,HW: Operational command
-    Brain->>HL: Apply( target_state: On )
-    HL->>HL: transition: Ready to OnRequested
-    HL->>HW: actuate lamp
-    HW-->>HL: ACK
-    HL->>HL: transition: OnRequested to On
-    HL-->>Brain: ZoneReady( zone_id: Headlamp, state: On, reply: ... )
-  end
-
-%% --- POWER-OFF SEQUENCE (Light Red Background) ---
-  rect rgb(255, 220, 220)
-    Note over Brain,HW: Power-off sequence
-    Brain->>HL: BecomeOff
-    HL->>HL: transition: On to OffRequested
-    HL->>HW: de-actuate
-    HW-->>HL: ACK
-    HL->>HL: transition: OffRequested to BecomeOff to Off
-    HL-->>Brain: ZoneReady( zone_id: Headlamp, state: Off )
-  end
-```
-
-### WiperActor
-
-Wiper is a fully actorified twinlet with **immediate transitions** and **no ACK protocol**.
-Rain ingress (`RainsStarted` / `RainsStopped`, projected from `VssSignal::RainDetected` on
-CAN) is routed to the wiper zone while the Brain is in `Idle` or `Driving`. A successful
-`Start` / `Stop` tell emits `StartWiping` / `StopWiping` outcomes that traverse the
-actuation path to `ActuationCommand::StartWiper` / `StopWiper` on CAN.
-
-```text
-WiperActorMsg (mailbox)
-└── Apply(WiperActorVocabulary)           ← Brain tell: one WiperMessage per turn
-
-WiperActor
-├── ctx: WiperContext                     ← domain state (Off / Ready / Running)
-├── on_receiving_message()                ← pure L1 handler; immediate ZoneReady reply
-└── tell-back ZoneReady                   ← no spontaneous events, no ACK timer
-```
-
-- **Three states only** — `Off`, `Ready`, `Running`; no `OnRequested`-style pending states.
-- **Tell-back timeout** still applies (Brain↔twinlet coordination). Exhaustion yields a
-  synthetic `LogWarning` outcome on the diagnostic stream (unlike headlamp, there is no
-  `ZoneSpontaneous` path).
-- **L6 path** — gateway wiper command publisher → `vcan0` → `wiper_actuator` binary
-  (fire-and-forget motor log; optional `WIPER_ACTUATOR_DROP_RESPONSE_PROB` to ignore CMDs).
-
-Full diagram: [`diagrams/wiper_assembly_state_transition.md`](diagrams/wiper_assembly_state_transition.md)
-
----
-
-## TurnBarrier — ROB Pattern
-
-Each external ingress or twinlet spontaneous event creates one `TurnBarrier` wrapped in
-`BarrierEntry` and pushed onto `barrier_queue`. The drain loop commits barriers **strictly in
-ingress order**, regardless of which assembly replies arrive first.
-
-```rust
-pub(crate) struct TurnBarrier {
-    turn_id:        u64,
-    event:          FsmEvent,
-    now:            Instant,
-
-    pending:        BTreeSet<AssemblyId>,       // assemblies not yet replied
-    zone_waits:     HashMap<AssemblyId, TellBackWait>,
-    zone_timers:    HashMap<AssemblyId, TellBackTimer>,
-    zone_replies:   HashMap<AssemblyId, ZoneReply>,
-    zone_messages:  HashMap<AssemblyId, ZoneMessage>,
-}
-
-pub(crate) enum BarrierEntry {
-    Waiting(TurnBarrier),                     // awaiting one or more assembly tell-backs
-    Passthrough(PassthroughBarrier),          // no zone tell needed; committable immediately
-}
-```
-
-**Drain invariant:** `while let Some(front) = barrier_queue.front()` — examine front entry;
-if `Waiting` with non-empty `pending` set, stop; if `Passthrough` or `Waiting` with empty
-`pending`, pop and commit. Only the front entry may be committed.
-
-This solves the **ordering problem** from Iteration 3: when two assembly-directed events
-arrive, then assembly replies arrive in reverse order (e.g. Wiper replies before Headlamp
-replies to event A), the ledger still records event A before event B.
-
----
-
-## Assembly Routing During Preparing States
-
-The routing function `zone_message_for_event` returns `None` for all external events during
-`PreparingToStart` / `PreparingToStop`. No tell is sent. The event is recorded in the ledger
-with `applied: false` and discarded. Events that arrive after the FSM reaches `Idle` are
-routed normally according to their semantic meaning.
-
----
-
-## Quiescent Commit
-
-One external ingress or twinlet message triggers **one quiescent commit**: the Brain runs
-0+ **hops** (each → one ledger row), then `apply_step` once on the final stable cut, then
-merged actuation.
-
-```text
-tell-back / ingress -> hop -> hop -> ... -> stable -> apply_step -> actuation
-                        |-- one ledger row per hop --|
-```
-
-Detectors (e.g. `LightingUnsafe`) are pure functions in `twin_runtime/detectors/`. They
-propose `FsmEvent::Internal(...)` events; the transition table decides. The loop terminates
-when no detector fires or `MAX_QUIESCENCE_HOPS` is reached.
-
----
-
-## Dashboard app and twin lifecycle
-
-The reference application is **one process, one `main()`**, with two cooperating parts:
-
-| Part | Role |
-|------|------|
-| **Digital Twin** | Installed and run via **gateway runtime APIs** ([`TwinRuntimeBuilder`](crates/gateway/src/gateway_runtime.rs)): actor tree, `SessionClock`, CAN ingress, actuation egress |
-| **Dashboard** | Terminal UI (`tui_dashboard`) that **displays** what the twin emits on wired channels |
-
-Full design: [`DESIGN.md` §16](DESIGN.md#16-twin-lifecycle-install--start--operate--stop--disband). Architecture overview: [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md). Phased roadmap: [`docs/PHASES.md`](docs/PHASES.md). Checklist: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md).
-
-> **Note:** [Phase 9](docs/PHASES.md#phase-9--live-observation-transport-uds--zenoh) is **Done**:
-> Gateway owns the twin and observation capture; `tui_dashboard` is observation-only over an
-> **explicit** live carrier — `--uds <path>` or `--zenoh --keyexpr <expr>` (no defaults).
-
-### Setup (live split)
-
-1. **Gateway** requires exactly one of `--uds <path>`, `--zenoh --keyexpr <expr>`, or `--no-live`.
-   With a live mode it waits (UDS accept or Zenoh first subscriber), installs the twin, and tees
-   records to `./observations/<run-id>/` plus the live sink.
-2. **Dashboard** requires `--uds` or `--zenoh --keyexpr`; footer shows the path or `zenoh:<keyexpr>`;
-   applies schema-v2 events into the Phase 5 panes.
-3. **Emulator** drives lifecycle and sensors on CAN.
-
-The dashboard **trusts the twin completely** for display. Vehicle operation and **lifecycle**
-(PowerOn/PowerOff) are driven by **emulators and actuators on CAN** — not by dashboard keys.
-
-### Twin while `Off` — silent ignore
-
-The twin is installed and ready to mirror the real car, but until **PowerOn** it **silently
-ignores** all driver-side ingress (RPM, lux, rain, …): no FSM hops, no ledger rows, no context
-updates. Only **PowerOn** is processed. The Phase 1 `vcan0` smoke verifies that pre-Start CAN
-does not advance `Seq`.
-
-### Observer-only Dashboard
-
-Dashboard has no lifecycle controls. It waits for the emulator's PowerOn on CAN and renders only
-the diagnostic and ledger records authored by the twin. **`q`** / Esc still quits the UI (see the
-limitation below).
-
-There is **no accessory-power mode**: boot diagnostic may show session time while FSM is `Off`;
-the car is not powered until **PowerOn** arrives on the ingress path.
-
-### CAN before Start
-
-See [Twin while `Off`](#twin-while-off--silent-ignore). Do not interpret pre-PowerOn telemetry as
-“car partially on”. The finite emulator sends **PowerOn** as its first frame.
-
-### Gateway headless vs dashboard app
-
-| Binary | Start | Use |
-|--------|-------|-----|
-| **`gateway --uds …`** | Waits for Dashboard, then install | Live twin + archive + UDS |
-| **`gateway --zenoh --keyexpr …`** | Waits for first Zenoh subscriber, then install | Live twin + archive + Zenoh |
-| **`gateway --no-live`** | Install immediately; file archive only | Headless / CI |
-| **`tui_dashboard --uds …`** | Connects to Gateway UDS | Interactive observation |
-| **`tui_dashboard --zenoh --keyexpr …`** | Subscribes on the same keyexpr | Interactive observation |
+## How to run (manual smoke)
 
 ```bash
-# UDS pair
+# Terminals — start actuators, then Gateway, then Dashboard, then emulator:
+cargo run -p front_headlamp_actuator
+cargo run -p wiper_actuator
 cargo run -p gateway -- --uds observation.sock
 cargo run -p tui_dashboard -- --uds observation.sock
+EMULATOR_TUNNEL_PROB=0.01 EMULATOR_RAIN_PROB=0.008 \
+  cargo run -p emulator -- --readings 30
+```
 
-# Zenoh peer pair (same keyexpr; no zenohd required)
+UDS paths resolve under `<cwd>/tmp/` (e.g. `./tmp/observation.sock`).
+
+**Zenoh peer** (instead of UDS):
+
+```bash
 cargo run -p gateway -- --zenoh --keyexpr sdv/twin/observation
 cargo run -p tui_dashboard -- --zenoh --keyexpr sdv/twin/observation
-
-# Headless archive only
-cargo run -p gateway -- --no-live --observation-dir observations
 ```
 
-### Quit (`q`)
+**Headless capture** (files only): `cargo run -p gateway -- --no-live`  
+Runs land under `./observations/<run-id>/`.
 
-**`q` exits the Dashboard only** and closes the live link. The Gateway twin keeps running.
-Emulators and actuators in other terminals keep running on `vcan0`. Explicit Gateway Stop /
-disband (**TL-6**, Phase 10) is not implemented yet.
+Smoke scripts: `scripts/smoke-two-process.sh`, `scripts/smoke-zenoh-peer.sh`.
 
 ---
 
-## How to Run
+## Architecture (short)
 
-The live run uses separate Gateway and Dashboard processes sharing Linux **SocketCAN**
-(`vcan0` by default) plus an explicit observation link (UDS under `./tmp/` or peer Zenoh).
-UDS example (start in this order):
-
-```bash
-# One-time setup (per boot)
-sudo modprobe vcan
-sudo ip link add dev vcan0 type vcan 2>/dev/null || true
-sudo ip link set up vcan0
-
-# Terminal 1 — Headlamp actuator (CMD in → ACK/NACK out)
-cargo run -p front_headlamp_actuator
-
-# Terminal 2 — Wiper actuator (CMD in → motor log out; no ACK/NACK)
-cargo run -p wiper_actuator
-
-# Terminal 3 — Gateway (sole twin owner; waits for Dashboard on UDS)
-cargo run -p gateway -- --uds observation.sock --observation-dir observations
-# writes ./observations/<uuid>/{manifest.json,diagnostic.jsonl,ledger.jsonl}
-
-# Terminal 4 — observer-only Dashboard (connects; footer shows connection)
-cargo run -p tui_dashboard -- --uds observation.sock
-
-# Terminal 5 — Mode 1 emulator: PowerOn, live ticks, controlled stop
-EMULATOR_TUNNEL_PROB=0.01 \
-EMULATOR_RAIN_PROB=0.008 \
-cargo run -p emulator -- --readings 30
-# or open-ended until Ctrl+C (emulator process only):
-# cargo run -p emulator
-
-# Automated headless smoke (requires vcan0):
-# ./scripts/smoke-phase6-two-process.sh
-# ./scripts/smoke-phase9-zenoh-peer.sh
+```text
+Emulator ──CAN──► Gateway (twin + ObservationTee) ──files──► ./observations/<run-id>/
+                      │
+                      ├── live UDS or Zenoh ──► Dashboard (TUI)
+                      └── CAN CMD ◄──► Headlamp / Wiper actuators
 ```
 
-Zenoh peer pair (Terminals 3–4 alternative):
+```mermaid
+sequenceDiagram
+    autonumber
+    participant E as Emulator
+    participant HL as Headlamp actuator
+    participant WP as Wiper actuator
+    participant G as Gateway (twin + tee)
+    participant D as Dashboard
+    participant Disk as ./observations/<run-id>/
 
-```bash
-cargo run -p gateway -- --zenoh --keyexpr sdv/twin/observation --observation-dir observations
-cargo run -p tui_dashboard -- --zenoh --keyexpr sdv/twin/observation
+    Note over HL,WP: Start first — listen on vcan0
+    HL-->>HL: listen CMD
+    WP-->>WP: listen CMD
+
+    Note over G,D: Live link before twin install
+    G->>G: bind UDS or open Zenoh
+    G-->>D: wait for Dashboard
+    D->>G: connect (UDS accept / Zenoh subscribe)
+    G->>G: install twin, emit boot diagnostic
+    G->>Disk: tee boot (+ later records)
+    G->>D: live boot (+ later records)
+
+    Note over E,G: Finite session on CAN (vcan0)
+    E->>G: CAN 0x100 PowerOn
+    loop readings (RPM / lux / rain)
+        E->>G: CAN sensor frames
+        G->>G: FSM / ROB / assemblies
+        opt headlamp needed
+            G->>HL: CAN CMD
+            HL-->>G: CAN response
+        end
+        opt wiper needed
+            G->>WP: CAN CMD
+            WP-->>G: CAN response
+        end
+        G->>Disk: tee diagnostic + ledger
+        G->>D: live diagnostic + ledger
+        D->>D: update Driver / Engineer panes
+    end
+    E->>G: CAN 0x100 PowerOff
+    G->>Disk: tee final records
+    G->>D: live final records
 ```
 
-
-`--readings N` is optional and counts logical telemetry cycles. With `--readings N`, the
-emulator writes PowerOn, `N` RPM/lux/rain triples, then the shared trailer (`EngineRpm(0)` then
-PowerOff) and exits. Without `--readings`, it runs until **Ctrl+C on the emulator process**,
-then sends that same trailer. Ctrl+C is handled by the emulator only; Dashboard quit is
-unchanged.
-
-The twin's existing startup barrier orders immediate post-PowerOn readings after assembly
-readiness. PowerOff transmission does **not** guarantee acceptance. If another FSM guard
-prevents the twin from reaching `Idle`, Dashboard displays the twin-authored rejection and
-actual final state. File-driven Mode 2 / CSV echo remain deferred TODOs.
-
-### Captured observations
-
-Dashboard capture is enabled by default. After the Twin boot diagnostic arrives, each invocation
-creates a new UUID-named directory below `./observations` (or the parent supplied with
-`--observation-dir`) containing `manifest.json`, `diagnostic.jsonl`, and `ledger.jsonl`.
-
-Wall-clock fields are stored as numeric objects
-`{ "unix_seconds": <u64>, "nanosecond": <u32> }` (whole Unix seconds plus subsecond nanoseconds).
-The manifest records both capture `created_at` and Twin `session_started_at`.
-`observation-summary` prints wall times as `yyyy-mm-dd | HH:mm:ss:nnnnnnnnn (UTC)`.
-
-Every record consumed from either live stream is persisted before the Dashboard updates its
-latest-state display. The UI can visually skip intermediate updates between renders, but the
-artifact files retain every consumed record in each stream's order.
-
-Summarize a captured run with:
-
-```bash
-cargo run -p observation --bin observation-summary -- \
-  observations/<run-id>
-```
-
-### Tunable probabilities (optional)
-
-| Variable                                     | Process                 | Effect                                                               |
-| -------------------------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `EMULATOR_TUNNEL_PROB`                       | emulator                | Per-tick probability of entering a low-lux tunnel (headlamp demo)    |
-| `EMULATOR_RAIN_PROB`                         | emulator                | Per-tick probability of rain starting when dry (`0.0` disables rain) |
-| `FRONT_HEADLAMP_ACTUATOR_DROP_RESPONSE_PROB` | front_headlamp_actuator | Probability of sending no ACK/NACK after a CMD                       |
-| `WIPER_ACTUATOR_DROP_RESPONSE_PROB`          | wiper_actuator          | Probability of ignoring a wiper CMD (no motor actuation)             |
-
-Example:
-
-```bash
-EMULATOR_RAIN_PROB=0.05 cargo run -p emulator -- --readings 30
-WIPER_ACTUATOR_DROP_RESPONSE_PROB=0.3 cargo run -p wiper_actuator
-```
-
-### Prerequisites
-
-- Linux with `vcan0` set up (see one-time setup above)
-- Rust toolchain (MSRV: latest stable)
+- Library pyramid L0–L6: `common` is acyclic; Gateway/Dashboard import `common::facade` only
+  for twin types. Detail: [`docs/design-notes-pyramid-layers.md`](docs/design-notes-pyramid-layers.md).
+- Observation schema mirrors **published** Rust structs (currently **v3**: weather + wiper +
+  real rain events).
+- Twin still uses the Iteration-4 **ROB** (`barrier_queue`) and PreparingToStart/Stop lifecycle
+  — see archived Iter 4 design and [`diagrams/`](diagrams/).
 
 ---
 
-## Project Structure
+## Dashboard live
 
-Detail: [`docs/project-structure.md`](docs/project-structure.md)
+Live TUI during a finite emulator session (Driver / Engineer / ledger tail):
+
+![Dashboard live during a finite emulator session](assets/dashboard-live.gif)
+
+---
+
+## Dashboard surfaces
+
+| Pane | Shows |
+|------|--------|
+| Driver (Diagnostic) | Notice, speed bar, visibility (+ lux glyph), weather/wiper glyphs + text |
+| Engineer | Current state, last event, Headlamp / Wiper assembly context |
+| Ledger tail | Last 20 transition hops (`>` on newest) |
 
 ---
 
 ## Tests
 
 ```bash
-# Run all tests
-cargo test -p common
-
-# Run specific contract suites
-cargo test -p common -- test::quiescence_actor_contract
-cargo test -p common -- test::zone_tell_back_contract
-cargo test -p common -- test::turn_barrier_contract
-cargo test -p common -- test::headlamp_ack_timer_contract
-cargo test -p common -- test::headlamp_lifecycle_contract
-cargo test -p common -- test::wiper_zone_contract
-cargo test -p common -- test::wiper_actuation_contract
-cargo test -p common -- test::wiper_signal_contract
-cargo test -p common -- test::wiper_startup_failure_contract
-
-# Wiper CAN codec (vehicle_device_bus)
-cargo test -p vehicle_device_bus --test wiper_can_codec
+cargo test -p common -p observation -p gateway -p tui_dashboard -p emulator
 ```
 
-Contract test reference: [`docs/contract-tests.md`](docs/contract-tests.md)
-
----
-### Screenshot of running application
-
-![](./assets/conole-running-executables.jpg)
-
-
-## Design Documents
-
-Detail: [`docs/design-documents.md`](docs/design-documents.md)
+Contract tests under `crates/common/src/test/`; observation goldens under
+`crates/observation/testdata/golden/v3/`.
 
 ---
 
-## What Iteration 4 Is *Not* (Yet)
+## Docs map
 
-- Not a full vehicle SDV stack — two managed assemblies (`Headlamp`, `Wiper`) with L6 CAN
-  slices; many other vehicle domains are absent.
-- Not production safety certification — the correctness model is a teaching scaffold.
-- Not the offline ledger analyser — the gateway can emit a machine-oriented transition stream;
-  the reader/report tool is designed but unbuilt.
-- Not a replacement for the pyramid/ADR docs — see `docs/library-reorg.md`.
+| Doc | Role |
+|-----|------|
+| **This README** | What the repo contains; how to run |
+| [`docs/PLAN.md`](docs/PLAN.md) | Roadmap + important TBDs |
+| [`docs/DESIGN.md`](docs/DESIGN.md) | Stage 5 design decisions |
+| [`docs/ARCHITECTURE-OVERVIEW.md`](docs/ARCHITECTURE-OVERVIEW.md) | Topology, gaps, run notes |
+| [`docs/archive/`](docs/archive/) | Historical design notes (Iter 4 twin, agent specs) |
+| [`blog-inputs/`](blog-inputs/) | Narrative drafts (not repo truth) |
+| [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) | Shutdown / disband checklist |
+| [`docs/TODO-simulation-5.md`](docs/TODO-simulation-5.md) | Engineering backlog (actuation, tests, …) |
 
-Known gaps carried forward: CSV scenario/echo support (deferred), non-blocking actuation
-(child actor), HeadlampActor isolation tests, `ActuationIncomplete(Off)` coverage,
-explicit shutdown/disband on dashboard quit (**Phase 10** / TL-6, deferred until CAN E2E gate).
-Twin lifecycle status: [`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md) (TL-0–TL-5 done; TL-6+ pending).
+---
+
+## Status
+
+Multi-process Gateway + Dashboard, observation file capture, live UDS or peer Zenoh, and
+Dashboard presentation (including weather/wiper) are in place. Standalone replay and graceful
+shutdown / disband are not started. Embedding the emulator inside the Dashboard was dropped.
+
+---
+
+## TBD
+
+Major future work (detail in [`docs/PLAN.md`](docs/PLAN.md) and linked TODOs):
+
+| Item | Compact plan |
+|------|----------------|
+| **Standalone replay** | Dashboard (or tool) plays `observations/<run-id>/` without a live Gateway. |
+| **Shutdown / disband** | Quit → Stop → wait `Off` → tear down actors / ingress ([`docs/TODO-twin-lifecycle.md`](docs/TODO-twin-lifecycle.md)). |
+| **Active ROB turns** | Engineer live `N` from `barrier_queue`; emit on queue push/drain (not ledger-hop stamps). |
+| **Visibility `Swatch`** | Colour chips for lux bands (low / hold / bright) instead of unicode boxes alone. |
+| **Notice colours** | Style Notice by `DiagnosticLevel` / kind (labels already cyan). |
+| **Glyph ASCII / motion** | Optional ASCII fallback for weak terminals; optional wiper/weather animation. |
+| **Richer assemblies** | Deeper Headlamp / Wiper twinlet detail once Twin publishes it. |
+| **Headlamp unconfirmed** | Finish / relocate `HeadlampActuationUnconfirmed` (zone tell-back candidate). |
+| **Non-blocking actuation** | Engineering backlog — async CMD path without stalling the twin loop ([`docs/TODO-simulation-5.md`](docs/TODO-simulation-5.md)). |

@@ -1,10 +1,10 @@
-//! Phase 2 RED → GREEN contract: HeadlampState::Ready, BecomeOn/BecomeOff messages, AssemblyId.
+//! RED → GREEN contract: HeadlampState::Ready, BecomeOn/BecomeOff messages, AssemblyId.
 //!
 //! Verified behaviours:
-//! - `BecomeOn` : Off  → Ready  (assembly activation)
-//! - `BecomeOff`: Ready → Off   (assembly deactivation from idle)
-//! - `BecomeOff`: On   → Off    (forced deactivation from lit state)
-//! - `Off`  ignores lux (assembly not started)
+//! - `BecomeOn` : Off → Ready (assembly activation)
+//! - `BecomeOff`: Ready → Off (assembly deactivation from idle)
+//! - `BecomeOff`: On → Off (forced deactivation from lit state)
+//! - `Off` ignores lux (assembly not started)
 //! - `Ready` triggers `OnRequested` on low lux (assembly active, lamp dark)
 //! - `AckOff` lands in `Ready`, not `Off` (lamp off but assembly still active)
 //! - `ActuationIncomplete(On)` recovers to `Ready`, not `Off`

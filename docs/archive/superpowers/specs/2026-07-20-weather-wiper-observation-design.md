@@ -219,9 +219,11 @@ weather/wiper. Lux **keeps** the numeric.
 
 ### Engineer (text only, full fidelity)
 
-- Weather: `Raining` / `Sunny` from `current_ctx.weather.raining`
-- Sub-assembly Wiper: `Off` / `Ready` / `Running` (replace `—`)
+- Sub-assembly Headlamp + Wiper from `current_ctx` (full wiper `Off` / `Ready` / `Running`)
 - Last event: real `RainsStarted` / `RainsStopped` once published
+- Weather line: **not** shown here (Driver weather line is the operator surface)
+- Active ROB turns: **removed** from pane — tracked in
+  [`TODO-simulation-5.md`](../../TODO-simulation-5.md) § Important missing TBDs
 
 ### Glyph families (summary)
 

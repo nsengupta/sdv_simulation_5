@@ -81,9 +81,9 @@ fn main() -> Result<()> {
         "[front-headlamp-actuator] {ENV_ACK_NACK_RESPONSE_PROB}={ack_nack_response_prob} (P(ACK) when responding)"
     );
 
-    // Off-hot-path logger: keep all in-loop logging off the CAN read/respond path so that console
-    // back-pressure (a paused terminal via Ctrl-S/XOFF, a slow pipe, a full disk) can never block
-    // `read_frame`/`write_frame` and starve the digital twin of ACK/NACK responses.
+ // Off-hot-path logger: keep all in-loop logging off the CAN read/respond path so that console
+ // back-pressure (a paused terminal via Ctrl-S/XOFF, a slow pipe, a full disk) can never block
+ // `read_frame`/`write_frame` and starve the digital twin of ACK/NACK responses.
     let (log_tx, log_rx) = sync_channel::<String>(LOG_CHANNEL_CAPACITY);
     thread::spawn(move || {
         for line in log_rx {
@@ -114,9 +114,9 @@ fn main() -> Result<()> {
         let command_direction = match &cmd {
             ActuationCommand::SwitchFrontHeadlampOn { .. } => "ON",
             ActuationCommand::SwitchFrontHeadlampOff { .. } => "OFF",
-            // Wiper commands are never decoded by the front-headlamp actuator's
-            // codec (`actuation_command_from_cmd_payload`), so this arm is unreachable
-            // in practice — but required for `ActuationCommand` match exhaustiveness.
+ // Wiper commands are never decoded by the front-headlamp actuator's
+ // codec (`actuation_command_from_cmd_payload`), so this arm is unreachable
+ // in practice — but required for `ActuationCommand` match exhaustiveness.
             ActuationCommand::StartWiper | ActuationCommand::StopWiper => continue,
         };
         let (session, seq) = actuation_command_wire_meta(&cmd);

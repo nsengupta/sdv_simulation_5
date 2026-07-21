@@ -1,6 +1,6 @@
 //! Powertrain zone (L1): alphabet + context + behavior.
 //!
-//! **ADR-5:** [`PowertrainState`] (same shape as [`PowertrainContext`] today),
+//! **:** [`PowertrainState`] (same shape as [`PowertrainContext`] today),
 //! [`PowertrainMessage`], [`PowertrainOutcome`].
 //!
 //! Self-sufficient: it receives a bus RPM reading, derives speed (via

@@ -1,20 +1,19 @@
 # SDV simulation — architecture overview
 
-This document is the **single source of truth** for where the project is going.
-Implementation is **phase-by-phase**; each phase is specified in [`PHASES.md`](PHASES.md).
-We agree on a phase before coding it. **Tests are mandatory** for every phase.
+This document is the **topology / gap register** for Simulation 5. Roadmap livedoc:
+[`PLAN.md`](PLAN.md). Implementation is **phase-by-phase**; detailed gates live in
+[`archive/PHASES-detailed.md`](archive/PHASES-detailed.md). **Tests are mandatory** for every phase.
 
 Related:
 
-- [`DESIGN.md`](../DESIGN.md) — FSM, actors, observation streams (technical design)
-- [`PHASES.md`](PHASES.md) — phased checklist with acceptance criteria
-- [`TODO-twin-lifecycle.md`](TODO-twin-lifecycle.md) — TL-0–TL-5 done; TL-6+ mapped to phases
-- [`TODO-simulation-5.md`](TODO-simulation-5.md) — carry-forward simulation items
-- [`design-notes-pyramid-layers.md`](design-notes-pyramid-layers.md) — canonical L0–L6 dependency rules
-- [Phase 3 observation-capture design](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md)
-  — storage format and capture ownership
-- [Numeric Unix timestamps design](superpowers/specs/2026-07-18-numeric-unix-timestamps-design.md)
-  — live `UnixTimestamp` and schema-v1 `{unix_seconds,nanosecond}` objects
+- [`DESIGN.md`](DESIGN.md) — Stage 5 process / observation / Dashboard decisions
+- [`archive/DESIGN-iteration-4.md`](archive/DESIGN-iteration-4.md) — twin FSM, ROB, assemblies
+- [`PLAN.md`](PLAN.md) — phases summary + important TBDs
+- [`TODO-twin-lifecycle.md`](TODO-twin-lifecycle.md) — TL-0–TL-5 done; TL-6+ → Phase 10
+- [`TODO-simulation-5.md`](TODO-simulation-5.md) — engineering backlog
+- [`design-notes-pyramid-layers.md`](design-notes-pyramid-layers.md) — L0–L6 dependency rules
+- [Phase 3 observation-capture design](archive/superpowers/specs/2026-07-17-phase-3-observation-capture-design.md)
+- [Numeric Unix timestamps design](archive/superpowers/specs/2026-07-18-numeric-unix-timestamps-design.md)
 
 ---
 
@@ -154,9 +153,8 @@ EMULATOR_RAIN_PROB=0.008 \
 cargo run -p emulator -- --readings 30
 ```
 
-UDS paths resolve under `<cwd>/tmp/` (default `./tmp/observation.sock`). Headless capture:
-`cargo run -p gateway` (no `--uds`) still writes `./observations/<run-id>/`.
-Automated smoke: [`scripts/smoke-phase6-two-process.sh`](../scripts/smoke-phase6-two-process.sh).
+UDS paths resolve under `<cwd>/tmp/` (default `./tmp/observation.sock`). Headless capture: `cargo run -p gateway -- --no-live` still writes `./observations/<run-id>/`.
+Automated smoke: [`scripts/smoke-two-process.sh`](../scripts/smoke-two-process.sh).
 
 With `--readings N`, the emulator sends PowerOn, then `N` RPM/lux/rain cycles, then RPM zero and
 PowerOff (`3N + 3` frames). Without `--readings`, it runs until Ctrl+C on the emulator process,
@@ -175,8 +173,8 @@ depends on `observation`. The detailed pyramid boundary is documented in
 **Gateway** owns capture via `ObservationTee` (convert once → `RunWriter` + optional `LiveSink`).
 Each run has a versioned `manifest.json` and separate `diagnostic.jsonl` / `ledger.jsonl`
 streams. Dashboard consumes the live UDS feed only (apply-before-display). See the
-[Phase 3 design](superpowers/specs/2026-07-17-phase-3-observation-capture-design.md) and
-[Phase 6 design](superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md).
+[Phase 3 design](archive/superpowers/specs/2026-07-17-phase-3-observation-capture-design.md) and
+[Phase 6 design](archive/superpowers/specs/2026-07-19-phase-6-gateway-dashboard-split-design.md).
 
 ---
 
@@ -202,8 +200,9 @@ streams. Dashboard consumes the live UDS feed only (apply-before-display). See t
 | 2026-07-19 | Phase 7 embedded emulator/TUI driver **cancelled**; Phase 8 replay **TBD next simulation**; Phase 9 Zenoh is next carrier work (uProtocol optional). |
 | 2026-07-19 | Phase 9 live link: both `gateway` and `tui_dashboard` require explicit live-mode flags (no default) to avoid mixed transports. |
 | 2026-07-20 | Phase 9 roadmap: observation-only Zenoh; peer sessions; one keyexpr; uProtocol and vehicle-bus Zenoh out of phase. |
-| 2026-07-20 | Phase 9 design approved: mutually exclusive `--uds` / `--zenoh` / `--no-live` (Gateway); `--uds` / `--zenoh` (Dashboard); required `--keyexpr` with Zenoh; subscriber-wait install gate. See [`2026-07-20-phase-9-zenoh-observation-design.md`](superpowers/specs/2026-07-20-phase-9-zenoh-observation-design.md). |
+| 2026-07-20 | Phase 9 design approved: mutually exclusive `--uds` / `--zenoh` / `--no-live` (Gateway); `--uds` / `--zenoh` (Dashboard); required `--keyexpr` with Zenoh; subscriber-wait install gate. See [`archive/superpowers/specs/2026-07-20-phase-9-zenoh-observation-design.md`](archive/superpowers/specs/2026-07-20-phase-9-zenoh-observation-design.md). |
 | 2026-07-20 | Phase 9 **Done**: `ZenohLiveSink`/`ZenohLiveSource`; exclusive CLI; peer Zenoh; G10 closed. |
+| 2026-07-20 | Weather/wiper published on ledger (schema v3); Dashboard glyphs; livedocs `PLAN.md` / `DESIGN.md`; per-phase specs archived under `docs/archive/superpowers/`. |
 
 ---
 
@@ -221,7 +220,7 @@ streams. Dashboard consumes the live UDS feed only (apply-before-display). See t
 | Finite emulator composition | `crates/emulator/src/main.rs`, `crates/emulator/src/runner.rs` |
 | Headlamp / wiper actuators | `crates/front_headlamp_actuator/`, `crates/wiper_actuator/` |
 | Observation schema, tee, live UDS | `crates/observation/` |
-| Phase 6 smoke | `scripts/smoke-phase6-two-process.sh` |
+| Phase 6 smoke | `scripts/smoke-two-process.sh` |
 
 ---
 

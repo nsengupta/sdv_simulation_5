@@ -34,7 +34,7 @@ fn assert_published_headlamp_matches_runtime(
 }
 
 fn expected_headlamp_after_on_ack_journey(now: Instant) -> HeadlampContext {
-    // Starting in Ready (assembly active, lamp dark) — the post-Phase-2 baseline.
+    // Starting in Ready (assembly active, lamp dark) — the post-baseline.
     let ctx = HeadlampContext {
         state: HeadlampState::Ready,
         ack_pending_since: None,
@@ -51,7 +51,7 @@ fn expected_headlamp_after_on_ack_journey(now: Instant) -> HeadlampContext {
 async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_embed() {
     let (transition_tx, mut rx) = mpsc::channel(16);
     let (actuation_tx, mut actuation_rx) = mpsc::channel(16);
-    // Phase 5: headlamp reaches Ready automatically via the startup BecomeOn barrier;
+    // headlamp reaches Ready automatically via the startup BecomeOn barrier;
     // `initial_headlamp_ctx` is no longer needed.
     let runtime_options = VehicleControllerRuntimeOptions {
         transition_tx: Some(transition_tx),
@@ -70,10 +70,10 @@ async fn given_low_lux_and_on_ack_when_get_status_then_ledger_headlamp_matches_e
         handle,
     };
 
-    // Phase 7: startup barrier drains for BOTH assemblies.
-    //   row 1 = PowerOn → PreparingToStart
-    //   row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart
-    //   row 3 = AssemblyZoneReady(Wiper) → Idle
+    // startup barrier drains for BOTH assemblies.
+    // row 1 = PowerOn → PreparingToStart
+    // row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart
+    // row 3 = AssemblyZoneReady(Wiper) → Idle
     power_on_to_idle(&controller).await;
     let _power_on_record = rx.recv().await.expect("ledger row for power on");
     let _ = rx.recv().await.expect("ledger row for headlamp zone ready");
@@ -152,10 +152,10 @@ async fn given_power_on_only_when_get_status_then_ledger_headlamp_matches_embed(
         handle,
     };
 
-    // Phase 7: startup barrier drains for BOTH assemblies.
-    //   row 1 = PowerOn → PreparingToStart
-    //   row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart
-    //   row 3 = AssemblyZoneReady(Wiper) → Idle
+    // startup barrier drains for BOTH assemblies.
+    // row 1 = PowerOn → PreparingToStart
+    // row 2 = AssemblyZoneReady(Headlamp) → PreparingToStart
+    // row 3 = AssemblyZoneReady(Wiper) → Idle
     power_on_to_idle(&controller).await;
     let _power_on_record = rx.recv().await.expect("ledger row for power on");
     let _ = rx.recv().await.expect("ledger row for headlamp zone ready");
