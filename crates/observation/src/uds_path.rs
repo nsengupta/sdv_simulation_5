@@ -18,6 +18,10 @@ pub fn resolve_uds_path(user: Option<&Path>) -> Result<PathBuf, ObservationError
         path: PathBuf::from("."),
         source,
     })?;
+    resolve_uds_path_from(&cwd, user)
+}
+
+fn resolve_uds_path_from(cwd: &Path, user: Option<&Path>) -> Result<PathBuf, ObservationError> {
     let tmp_dir = normalize_path(&cwd.join("tmp"));
 
     let candidate = match user {
@@ -88,38 +92,18 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    struct CwdGuard {
-        original: PathBuf,
-    }
-
-    impl CwdGuard {
-        fn enter(path: &Path) -> Self {
-            let original = env::current_dir().unwrap();
-            env::set_current_dir(path).unwrap();
-            Self { original }
-        }
-    }
-
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = env::set_current_dir(&self.original);
-        }
-    }
-
     #[test]
     fn default_path_is_under_cwd_tmp() {
         let dir = tempdir().unwrap();
-        let _guard = CwdGuard::enter(dir.path());
         fs::create_dir_all(dir.path().join("tmp")).unwrap();
-        let path = resolve_uds_path(None).unwrap();
+        let path = resolve_uds_path_from(dir.path(), None).unwrap();
         assert_eq!(path, dir.path().join("tmp").join("observation.sock"));
     }
 
     #[test]
     fn bare_filename_resolves_under_cwd_tmp() {
         let dir = tempdir().unwrap();
-        let _guard = CwdGuard::enter(dir.path());
-        let path = resolve_uds_path(Some(Path::new("custom.sock"))).unwrap();
+        let path = resolve_uds_path_from(dir.path(), Some(Path::new("custom.sock"))).unwrap();
         assert_eq!(path, dir.path().join("tmp").join("custom.sock"));
     }
 
